@@ -1,0 +1,2156 @@
+/* Sponge Lab: a dark, neutral frame around underwater video.
+   The grays carry no hue, so the chrome never tints how the water and the
+   sponges read. Magenta belongs to the mark and to the species chosen for it,
+   and the Later amber belongs to points saved without a species. */
+
+:root {
+  --guide-dock-width: clamp(280px, 26vw, 420px);
+  color-scheme: dark;
+
+  --bg-0: #0c0c0c;
+  --bg-1: #151515;
+  --bg-2: #1d1d1d;
+  --bg-3: #272727;
+  --line: #2b2b2b;
+  --line-strong: #3d3d3d;
+
+  --text: #ededed;
+  --text-2: #b9b9b9;
+  --text-3: #959595;
+
+  --mark: #ff2bd6;
+  --mark-ink: #1f0019;
+  --mark-soft: rgba(255, 43, 214, 0.16);
+  --amber: #f3b73f;
+  --amber-soft: rgba(243, 183, 63, 0.13);
+  --green: #6ddc9b;
+  --green-soft: rgba(109, 220, 155, 0.13);
+  --red: #ff8080;
+  --red-soft: rgba(255, 128, 128, 0.12);
+  --focus: #8cc8ff;
+  --later: #ffb020;
+
+  /* The species wheel: dark see-through wedges, so the paused frame shows dimly behind. */
+  --wheel-slice: rgba(16, 18, 22, 0.78);
+  --wheel-slice-empty: rgba(16, 18, 22, 0.5);
+  --wheel-line: rgba(255, 255, 255, 0.24);
+  --wheel-lit: rgba(255, 43, 214, 0.85);
+  --wheel-match: rgba(70, 70, 70, 0.86);
+  --wheel-phase-1: rgba(22, 92, 56, 0.84);
+  --wheel-phase-1-lit: rgba(109, 220, 155, 0.95);
+  --wheel-phase-2: rgba(128, 18, 106, 0.84);
+  --wheel-phase-3-lit: rgba(200, 200, 200, 0.95);
+  --wheel-hub-ring: rgba(255, 255, 255, 0.75);
+  --wheel-delete: #ff4a4a;
+  --wheel-chip: rgba(16, 18, 22, 0.92);
+  --wheel-halo: rgba(0, 0, 0, 0.85);
+  --wheel-open: 80ms;
+  --wheel-layer: 57;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-label: "DIN Alternate", "Avenir Next Condensed", "Helvetica Neue", Helvetica, Arial, sans-serif;
+
+  --left: clamp(204px, 19vw, 272px);
+  --right: clamp(224px, 20vw, 296px);
+  --radius: 6px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg-0);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p,
+ul,
+dl,
+dd {
+  margin: 0;
+}
+
+ul {
+  padding: 0;
+  list-style: none;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sprite {
+  position: absolute;
+}
+
+.icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  fill: currentColor;
+  stroke: currentColor;
+  flex: none;
+}
+
+/* ------------------------------------------------------------ controls */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  color: var(--text);
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--bg-3);
+  border-color: #4d4d4d;
+}
+
+.button:active:not(:disabled) {
+  background: #303030;
+}
+
+.button:disabled {
+  color: var(--text-3);
+  border-color: var(--line);
+  background: transparent;
+  cursor: default;
+}
+
+.button-icon {
+  width: 30px;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.button-toggle[aria-pressed="true"] {
+  background: var(--green-soft);
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.button-icon[aria-pressed="true"] {
+  background: var(--bg-3);
+  border-color: #5a5a5a;
+}
+
+.button-icon[aria-pressed="false"] {
+  color: var(--text-3);
+}
+
+.input {
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-0);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.input::placeholder {
+  color: var(--text-3);
+  opacity: 1;
+}
+
+.input:disabled {
+  border-color: var(--line);
+  background: transparent;
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--red);
+}
+
+.input-short {
+  width: 9ch;
+  font-family: var(--font-mono);
+  text-align: center;
+}
+
+.badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.badge[data-status="in progress"] {
+  border-color: transparent;
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.badge[data-status="done"] {
+  border-color: transparent;
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.badge-warn {
+  border-color: transparent;
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.notice {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  margin: 0 12px 10px;
+  padding: 10px;
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  background: var(--red-soft);
+}
+
+.notice-text {
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  padding: 10px 8px;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.count {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg-0);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* -------------------------------------------------------------- top bar */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  height: 46px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-1);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+}
+
+/* The brand mark is the marker itself: a magenta ring with a white outline. */
+.brand-mark {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 3px solid var(--mark);
+  box-shadow: 0 0 0 1.5px #ffffff, inset 0 0 0 1.5px #ffffff;
+}
+
+.brand-name {
+  font-family: var(--font-label);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.current-video {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.field-label {
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+/* ------------------------------------------------------------ workspace */
+
+.workspace {
+  display: grid;
+  grid-template-columns: var(--left) minmax(0, 1fr) var(--right);
+  min-height: 0;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-1);
+}
+
+.browser {
+  border-right: 1px solid var(--line);
+}
+
+.log {
+  border-left: 1px solid var(--line);
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 12px 7px;
+}
+
+.panel-title {
+  color: var(--text-2);
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.panel-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 6px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a3a transparent;
+}
+
+.rows {
+  display: grid;
+  gap: 2px;
+}
+
+/* -------------------------------------------------------------- browser */
+
+.breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1px 2px;
+  padding: 0 12px 8px;
+  font-size: 13px;
+}
+
+.crumb {
+  padding: 1px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  text-align: left;
+  cursor: pointer;
+}
+
+.crumb:hover {
+  background: var(--bg-3);
+  color: var(--text);
+}
+
+.crumb[aria-current="page"] {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.crumb-sep {
+  color: var(--text-3);
+}
+
+.search-row {
+  display: flex;
+  gap: 6px;
+  padding: 0 12px 9px;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.folder-row .icon {
+  color: var(--text-3);
+}
+
+.folder-row:hover {
+  background: var(--bg-2);
+}
+
+.folder-up {
+  color: var(--text-2);
+}
+
+.video-row {
+  position: relative;
+  border-radius: var(--radius);
+}
+
+.video-row[aria-current="true"] {
+  background: var(--bg-3);
+  box-shadow: inset 2px 0 0 var(--text);
+}
+
+.video-open {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 6px 8px 7px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.video-open:hover {
+  background: var(--bg-2);
+}
+
+.video-row[aria-current="true"] .video-open:hover {
+  background: transparent;
+}
+
+.video-name {
+  display: grid;
+  gap: 1px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.video-name-dim {
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.video-name-main {
+  padding-right: 44px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.video-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 7px;
+}
+
+.format {
+  color: var(--text-3);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.match-was {
+  color: var(--amber);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.video-progress {
+  color: var(--text-2);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.format[data-format="convert"] {
+  color: var(--text-2);
+}
+
+.format[data-format="failed"] {
+  color: var(--red);
+}
+
+/* The queue button sits beside the bright part of the name: the first line of a
+   plain name, the second line when the dim TCRMP lead takes the first. */
+.video-queue {
+  position: absolute;
+  top: 3px;
+  right: 6px;
+  min-width: 28px;
+  width: auto;
+  min-height: 24px;
+  padding: 0 5px;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.video-row[data-lead="true"] .video-queue {
+  top: 22px;
+}
+
+.video-queue[data-state="ready"] {
+  border-color: transparent;
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.video-queue[data-state="failed"] {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+/* ---------------------------------------------------------------- stage */
+
+.center {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a3a transparent;
+}
+
+/* The theater is what full screen shows: the stage over the transport row, with the
+   wheel, the toasts, and the cards floating inside it. */
+.theater {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-0);
+}
+
+.theater:fullscreen {
+  width: 100vw;
+  height: 100vh;
+}
+
+.stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 200px;
+  background: #000000;
+  overflow: hidden;
+}
+
+.theater:fullscreen .stage {
+  min-height: 0;
+}
+
+.stage-video,
+.stage-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.stage-video {
+  object-fit: contain;
+  background: #000000;
+}
+
+.stage-overlay {
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.stage-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.stage-status-text {
+  max-width: 48ch;
+  padding: 9px 15px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.74);
+  color: var(--text);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.stage-status .button {
+  pointer-events: auto;
+}
+
+/* ------------------------------------------------------------ transport */
+
+.transport {
+  flex: none;
+  padding: 0 10px 7px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-1);
+}
+
+.scrub-wrap {
+  position: relative;
+  height: 22px;
+}
+
+.scrub {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.scrub:disabled {
+  cursor: default;
+}
+
+.scrub::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #3a3a3a;
+}
+
+.scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.scrub:disabled::-webkit-slider-thumb {
+  background: #5a5a5a;
+}
+
+.scrub-marks {
+  position: absolute;
+  top: 0;
+  right: 7px;
+  left: 7px;
+  height: 22px;
+  pointer-events: none;
+}
+
+.scrub-mark {
+  position: absolute;
+  top: 3px;
+  width: 2px;
+  height: 5px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--mark);
+}
+
+.scrub-mark[data-status="unlabeled"] {
+  background: var(--later);
+}
+
+.transport-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.transport-gap {
+  flex: 1 1 auto;
+}
+
+.time {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.speed {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.speed-value {
+  min-width: 44px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* ----------------------------------------------------------------- deck */
+
+.deck {
+  flex: none;
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border-top: 2px solid var(--line);
+  background: var(--bg-1);
+}
+
+/* The panel hides on request (P or the panel button). A species list that failed to load
+   shows it anyway, so its error and Retry stay in reach. */
+body[data-deck="hidden"] .deck {
+  display: none;
+}
+
+body[data-deck="hidden"] .deck:has(#species-error:not([hidden])) {
+  display: grid;
+}
+
+body[data-mode="marking"] .deck {
+  border-top-color: var(--mark);
+}
+
+.deck .notice {
+  margin: 0;
+}
+
+.pins {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+/* Each pinned species is a keycap: the digit legend, the code, the epithet. */
+.pin-slot {
+  position: relative;
+  min-width: 0;
+}
+
+.pin-choose {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 2px 7px;
+  width: 100%;
+  min-height: 50px;
+  padding: 5px 6px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 3px;
+  border-radius: 8px;
+  background: linear-gradient(#222222, #1a1a1a);
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pin-choose:hover {
+  border-color: #565656;
+}
+
+.pin-key {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 21px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg-0);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pin-code {
+  margin-right: 20px;
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.pin-name {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 13px;
+  font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pin-slot[data-code=""] .pin-name {
+  font-style: normal;
+}
+
+/* Key color follows the species: green for guide Part 1, pink for Part 2, gray for the rest. */
+.pin-slot[data-tier="original"] {
+  --pin-color: var(--green);
+  --pin-soft: var(--green-soft);
+}
+
+.pin-slot[data-tier="added"] {
+  --pin-color: var(--mark);
+  --pin-soft: var(--mark-soft);
+}
+
+.pin-slot[data-tier="original"] .pin-choose,
+.pin-slot[data-tier="added"] .pin-choose {
+  border-color: var(--pin-color);
+  background: var(--pin-soft);
+}
+
+.pin-slot[data-tier="original"] .pin-choose:hover,
+.pin-slot[data-tier="added"] .pin-choose:hover {
+  filter: brightness(1.3);
+}
+
+.pin-slot[data-tier="original"] .pin-key,
+.pin-slot[data-tier="added"] .pin-key {
+  border-color: var(--pin-color);
+  color: var(--pin-color);
+}
+
+.pin-slot[data-tier="original"] .pin-code,
+.pin-slot[data-tier="added"] .pin-code {
+  color: var(--pin-color);
+}
+
+.pin-slot[data-tier="original"] .pin-name,
+.pin-slot[data-tier="added"] .pin-name {
+  color: var(--text-2);
+}
+
+body[data-mode="marking"] .pin-key,
+body[data-mode="marking"] .pin-code {
+  color: var(--text);
+}
+
+body[data-mode="marking"] .pin-key {
+  border-color: #5a5a5a;
+}
+
+.pin-assign {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 21px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.pin-assign .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.pin-assign:hover {
+  background: var(--bg-3);
+  color: var(--text);
+}
+
+body[data-pinning="true"] .pin-assign {
+  color: var(--focus);
+}
+
+.markbar {
+  display: grid;
+  gap: 7px;
+}
+
+.markbar-summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 24px;
+}
+
+.mode-pill {
+  flex: none;
+  padding: 2px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--text-2);
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+body[data-mode="marking"] .mode-pill {
+  border-color: var(--mark);
+  background: var(--mark);
+  color: var(--mark-ink);
+}
+
+.mark-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-mode="marking"] .mark-summary {
+  color: var(--text);
+}
+
+.mark-error {
+  padding: 6px 9px;
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  background: var(--red-soft);
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.markbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.combo {
+  position: relative;
+  flex: 1 1 170px;
+  min-width: 0;
+}
+
+.note {
+  flex: 2 1 210px;
+  width: auto;
+  min-width: 0;
+}
+
+.markbar-buttons {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.matches {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: max(100%, 310px);
+  max-height: 206px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #202020;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  scrollbar-width: thin;
+  scrollbar-color: #4a4a4a transparent;
+}
+
+.match {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.match:hover {
+  background: #2c2c2c;
+}
+
+.match[aria-selected="true"] {
+  background: var(--mark-soft);
+  box-shadow: inset 0 0 0 1px var(--mark);
+}
+
+.match-code {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.match-name {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 14px;
+  font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match[aria-selected="true"] .match-name {
+  color: var(--text);
+}
+
+.match-empty {
+  padding: 7px 8px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+/* ------------------------------------------------------------ right panel */
+
+.log-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.log-sightings {
+  flex: 1 1 52%;
+}
+
+.log-later {
+  flex: 0 1 auto;
+  max-height: 32%;
+  border-top: 1px solid var(--line);
+}
+
+.log-tally {
+  flex: 1 1 48%;
+  border-top: 1px solid var(--line);
+}
+
+.sighting {
+  position: relative;
+  border-radius: var(--radius);
+}
+
+.sighting[data-fresh="true"] {
+  background: var(--mark-soft);
+}
+
+.sighting-jump {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 5px 34px 5px 6px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sighting-jump:hover {
+  background: var(--bg-2);
+}
+
+.sighting[data-armed="true"] .sighting-jump {
+  padding-right: 92px;
+}
+
+.sighting-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 4px;
+  background: var(--bg-3);
+  object-fit: cover;
+}
+
+.sighting-thumb[data-missing="true"] {
+  visibility: hidden;
+}
+
+.sighting-text {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.sighting-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.sighting-code {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.sighting[data-status="unlabeled"] .sighting-code {
+  color: var(--later);
+  font-family: var(--font-ui);
+}
+
+/* To label rows reuse the sighting row layout, without a delete button beside them. */
+.to-label-item {
+  border-radius: var(--radius);
+}
+
+.to-label-item .sighting-jump {
+  padding-right: 6px;
+}
+
+.to-label-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sighting-time {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sighting-sub {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.sighting-delete {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  width: 26px;
+  min-height: 26px;
+  transform: translateY(-50%);
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sighting-delete:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.sighting-delete[data-armed="true"] {
+  width: auto;
+  padding: 0 8px;
+  border-color: var(--red);
+  background: #2b1717;
+  color: var(--red);
+}
+
+.tally {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 13px;
+}
+
+.tally th:nth-child(2),
+.tally th:nth-child(4) {
+  width: 46px;
+}
+
+.tally th:nth-child(3) {
+  width: 60px;
+}
+
+.tally th {
+  padding: 2px 5px 5px;
+  color: var(--text-3);
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+}
+
+.tally td {
+  padding: 4px 5px;
+  border-top: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.tally .num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.tally-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.tally-pin {
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.tally-pin-none {
+  border-color: transparent;
+}
+
+.tally tr[data-tier="original"] .tally-code {
+  color: var(--green);
+}
+
+.tally tr[data-tier="added"] .tally-code {
+  color: var(--mark);
+}
+
+.tally tr[data-under="1"] td {
+  background: rgba(243, 183, 63, 0.05);
+}
+
+.tally tr[data-under="1"] td:first-child {
+  box-shadow: inset 2px 0 0 var(--amber);
+}
+
+.tally tr[data-under="1"] .tally-seen {
+  color: var(--amber);
+  font-weight: 700;
+}
+
+.tally tr[data-under="0"] .tally-seen {
+  color: var(--green);
+}
+
+.tally-divider td {
+  padding-top: 9px;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+/* ----------------------------------------------------- toasts and help */
+
+.toasts {
+  position: fixed;
+  top: 56px;
+  left: 50%;
+  z-index: 50;
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  width: min(560px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.toast {
+  max-width: 100%;
+  padding: 8px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #262626;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.55);
+  color: var(--text);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+  animation: toast-in 140ms ease-out;
+}
+
+/* A passing note lets clicks through to the sponges under it. Error toasts stay
+   selectable and clickable. */
+.toast[data-kind="ok"],
+.toast[data-kind="info"] {
+  pointer-events: none;
+}
+
+.toast[data-kind="ok"] {
+  border-color: var(--green);
+}
+
+.toast[data-kind="error"] {
+  border-color: var(--red);
+  background: #2b1717;
+}
+
+.toast:has(.toast-action) {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toast-action {
+  flex: none;
+  min-height: 26px;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.help {
+  position: fixed;
+  top: 54px;
+  right: 12px;
+  z-index: 60;
+  width: min(640px, calc(100vw - 24px));
+  max-height: calc(100vh - 66px);
+  overflow-y: auto;
+  padding: 4px 14px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #1b1b1b;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65);
+}
+
+.project {
+  width: min(460px, calc(100vw - 24px));
+}
+
+.project-form {
+  display: grid;
+  gap: 10px;
+}
+
+.project-field {
+  display: grid;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.project-field .input {
+  width: 100%;
+}
+
+.project-status {
+  min-height: 18px;
+  margin: 0;
+  color: var(--amber);
+  font-size: 13px;
+}
+
+.project-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.coverage {
+  width: min(900px, calc(100vw - 24px));
+}
+
+.coverage-folder {
+  margin-left: 8px;
+  color: var(--text-3);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.coverage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.coverage-table th,
+.coverage-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-2);
+  font-weight: 400;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.coverage-table thead th {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.coverage-table tbody th,
+.coverage-table tfoot th {
+  text-align: left;
+}
+
+.coverage-table tfoot th,
+.coverage-table tfoot td {
+  border-top: 1px solid var(--line-strong);
+  border-bottom: 0;
+  color: var(--text);
+}
+
+.coverage-table .coverage-species {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.coverage-table .coverage-species[data-tier="original"] {
+  color: var(--green);
+}
+
+.coverage-table .coverage-species[data-tier="added"] {
+  color: var(--mark);
+}
+
+.coverage-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.coverage-open:hover {
+  text-decoration: underline;
+}
+
+.coverage-count {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.coverage-reference {
+  margin-left: 4px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.coverage-cell[data-state="open"] .coverage-count {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.coverage-cell[data-state="tagged"] .coverage-count {
+  color: var(--text);
+}
+
+.coverage-table .coverage-cell[data-state="missing"] {
+  background: var(--amber-soft);
+}
+
+.coverage-cell[data-state="missing"] .coverage-count {
+  color: var(--amber);
+}
+
+.coverage-cell[data-state="absent"] .coverage-count {
+  color: var(--text-2);
+  font-family: inherit;
+  font-weight: 400;
+}
+
+.coverage-table .coverage-watched[data-complete="true"] {
+  color: var(--green);
+}
+
+.help-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+}
+
+.help-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.help-title {
+  margin-bottom: 7px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.keys {
+  display: grid;
+  gap: 5px;
+}
+
+.keys > div {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+}
+
+.keys dt {
+  color: var(--text-2);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.keys dd {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.help-note {
+  margin-top: 11px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------- narrow window */
+
+@media (max-width: 1100px) {
+  .pin-genus {
+    display: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .help-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast,
+  .wheel {
+    animation: none;
+  }
+}
+
+
+/* ----- species guide ----- */
+
+.guide {
+  position: fixed;
+  top: 54px;
+  right: 12px;
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  width: min(760px, calc(100vw - 24px));
+  max-height: calc(100vh - 66px);
+  padding: 4px 14px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #1b1b1b;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65);
+}
+
+/* Docked, the guide is a column beside the video inside the theater, in the window and in
+   full screen alike, so the picture shrinks instead of being covered. The theater's other
+   overlays (wheel, toasts, help) are fixed and take no grid cell. */
+body[data-guide-dock="docked"] .theater:has(> #guide:not([hidden])) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--guide-dock-width);
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+body[data-guide-dock="docked"] .theater:has(> #guide:not([hidden])) > .stage {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+body[data-guide-dock="docked"] .theater:has(> #guide:not([hidden])) > .transport {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+body[data-guide-dock="docked"] #guide {
+  position: static;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: auto;
+  min-height: 0;
+  max-height: none;
+  /* Size containment keeps the photo list from setting the theater's height; the column
+     takes the height of the video and scrolls inside. */
+  contain: size;
+  border: 0;
+  border-left: 1px solid var(--line-strong);
+  border-radius: 0;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+/* The docked column is narrow, so the species picker takes a row of its own under the title. */
+body[data-guide-dock="docked"] .guide-head {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+body[data-guide-dock="docked"] .guide-pick {
+  order: 1;
+  flex: 1 0 100%;
+}
+
+body[data-guide-dock="docked"] #guide-dock {
+  border-color: var(--line-strong);
+  background: var(--bg-2);
+}
+
+.guide-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.guide-pick {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.guide-pick .input {
+  width: 100%;
+}
+
+.guide-count {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.guide-notice {
+  margin: 0 0 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 13px;
+}
+
+.guide-text {
+  flex: 0 0 auto;
+  max-height: 34vh;
+  overflow-y: auto;
+  margin: 0 0 10px;
+  padding-right: 6px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.guide-images {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-auto-rows: 118px;
+  align-content: start;
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 120px;
+}
+
+/* Fixed tile height: an image sized by aspect ratio counts as zero height
+   when Chrome sizes auto grid rows inside a flex column, so rows collapsed. */
+.guide-image {
+  display: block;
+  height: 118px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-2);
+  cursor: zoom-in;
+  overflow: hidden;
+}
+
+.guide-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.guide-image:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.guide-large {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.82);
+  cursor: zoom-out;
+}
+
+.guide-large img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 6px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+}
+
+.guide-empty {
+  grid-column: 1 / -1;
+  padding: 18px 0;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ----- species wheel ----- */
+
+/* A viewport-sized layer inside the theater; only the wheel's own shapes take the pointer,
+   so a click beside the wheel still reaches the picture. */
+.phase-legend {
+  display: flex;
+  gap: 12px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.phase-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.phase-chip::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--text-3);
+}
+
+.phase-chip[data-tier="original"]::before {
+  background: var(--green);
+}
+
+.phase-chip[data-tier="added"]::before {
+  background: var(--mark);
+}
+
+.deck-legend {
+  margin-bottom: 6px;
+}
+
+.wheel-legend {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(16, 18, 22, 0.88);
+  font-size: 11px;
+}
+
+.wheel-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--wheel-layer);
+  pointer-events: none;
+}
+
+.wheel {
+  position: absolute;
+  pointer-events: none;
+  animation: wheel-in var(--wheel-open) ease-out;
+}
+
+@keyframes wheel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.wheel-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  font-family: var(--font-ui);
+  user-select: none;
+}
+
+.wheel-wedge {
+  fill: var(--wheel-slice);
+  stroke: var(--wheel-line);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: all;
+  cursor: pointer;
+}
+
+.wheel-slot-empty .wheel-wedge {
+  fill: var(--wheel-slice-empty);
+  cursor: default;
+}
+
+.wheel-svg text {
+  dominant-baseline: central;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.wheel-key {
+  fill: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.wheel-code {
+  fill: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.wheel-code-inner {
+  font-size: 13px;
+}
+
+.wheel-code-outer {
+  font-size: 12px;
+}
+
+.wheel-name {
+  fill: var(--text-2);
+  font-style: italic;
+}
+
+.wheel-name-inner {
+  font-size: 10px;
+}
+
+.wheel-name-outer {
+  font-size: 9.5px;
+}
+
+/* The count beside the code of a species already logged on this transect. */
+.wheel-seen {
+  fill: var(--later);
+  font-size: 0.8em;
+  font-weight: 600;
+}
+
+.wheel-slice[data-match="true"] .wheel-wedge {
+  fill: var(--wheel-match);
+}
+
+.wheel-slice[data-match="false"] {
+  opacity: 0.4;
+}
+
+.wheel-slice[data-lit="true"] {
+  opacity: 1;
+}
+
+.wheel-slice[data-tier="original"] .wheel-wedge {
+  fill: var(--wheel-phase-1);
+}
+
+.wheel-slice[data-tier="added"] .wheel-wedge {
+  fill: var(--wheel-phase-2);
+}
+
+.wheel-slice[data-lit="true"] .wheel-wedge {
+  fill: var(--wheel-phase-3-lit);
+}
+
+.wheel-slice[data-lit="true"][data-tier="original"] .wheel-wedge {
+  fill: var(--wheel-phase-1-lit);
+}
+
+.wheel-slice[data-lit="true"][data-tier="added"] .wheel-wedge {
+  fill: var(--wheel-lit);
+}
+
+.wheel-slice[data-lit="true"] text {
+  fill: var(--mark-ink);
+}
+
+.wheel-current {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 2px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.wheel-seam {
+  stroke: #ffffff;
+  stroke-width: 2.5px;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.wheel-hub-hit {
+  fill: transparent;
+  pointer-events: all;
+  cursor: pointer;
+}
+
+.wheel-hub-ring {
+  fill: none;
+  stroke: var(--wheel-hub-ring);
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+/* An edit wheel shows a bold ring: white on a labeled row (Unlabel), amber on a Later
+   point (Keep). A new mark keeps the thin ring. */
+.wheel-hub[data-label="Unlabel"] .wheel-hub-ring,
+.wheel-hub[data-label="Keep"] .wheel-hub-ring {
+  stroke: #ffffff;
+  stroke-width: 3px;
+}
+
+.wheel-hub[data-label="Keep"] .wheel-hub-ring {
+  stroke: var(--later);
+}
+
+.wheel-hub[data-lit="true"] .wheel-hub-ring {
+  stroke: var(--mark);
+  stroke-width: 3px;
+}
+
+/* A lit edit hub keeps its tint and grows bolder, so the edit still shows at a glance. */
+.wheel-hub[data-lit="true"][data-label="Unlabel"] .wheel-hub-ring {
+  stroke: #ffffff;
+  stroke-width: 4.5px;
+}
+
+.wheel-hub[data-lit="true"][data-label="Keep"] .wheel-hub-ring {
+  stroke: var(--later);
+  stroke-width: 4.5px;
+}
+
+/* After the first press of Backspace or Delete, the hub ring of an edit wheel turns red
+   until the second press deletes the row or the deletion disarms. */
+.wheel-hub[data-armed="true"][data-label] .wheel-hub-ring {
+  stroke: var(--wheel-delete);
+  stroke-width: 4.5px;
+}
+
+.wheel-hub-label {
+  fill: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  paint-order: stroke;
+  stroke: var(--wheel-halo);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+/* The leader to a shifted mark has the marks' white outline, so it reads on bright and dark water. */
+.wheel-leader {
+  pointer-events: none;
+}
+
+.wheel-leader-under,
+.wheel-leader-line {
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.wheel-leader-under {
+  stroke: #ffffff;
+  stroke-width: 5px;
+}
+
+.wheel-leader-line {
+  stroke: var(--mark);
+  stroke-width: 2px;
+}
+
+/* The readout names the species under the pointer, so the wheel needs no tooltips. */
+.wheel-readout {
+  position: absolute;
+  left: 50%;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  max-width: calc(100vw - 16px);
+  padding: 5px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--wheel-chip);
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.wheel-query {
+  padding: 0 6px;
+  white-space: pre;
+  border-radius: 4px;
+  background: var(--mark-soft);
+  color: var(--mark);
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.wheel-readout-code {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.wheel-readout-name {
+  overflow: hidden;
+  font-style: italic;
+  text-overflow: ellipsis;
+}
+
+.wheel-readout-key,
+.wheel-readout-hint {
+  color: var(--text-2);
+}
+
+.wheel-readout-delete {
+  color: var(--wheel-delete);
+  font-weight: 600;
+}
