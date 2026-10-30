@@ -11,7 +11,7 @@ Sponge Lab keeps no videos. It streams them from an S3 bucket that you choose in
 1. Download `SpongeLab-<version>.pkg` from [Releases](https://github.com/laurenkolinger/sponge-lab/releases/latest).
 2. Double-click it. macOS blocks an installer from an unidentified developer the first time: open **System Settings > Privacy & Security**, click **Open Anyway**, and run it again.
 3. Click through the installer. It needs no administrator password.
-4. Sponge Lab opens and asks to download Python, OpenCV, and ffmpeg, about 400 MB, into its own folder. Click **Download** and stay connected to the internet. This changes nothing else on the computer.
+4. Sponge Lab opens and asks to download OpenCV and ffmpeg into its own folder, plus Python if you do not have version 3.14. This is up to about 400 MB. Click **Download** and stay connected to the internet. This changes nothing else on the computer.
 5. Project setup appears. Click **Load videos** for the TCRMP videos, or enter another bucket and folder.
 
 Tested on an Apple silicon Mac running macOS 27. Sponge Lab needs Google Chrome or another current browser. Windows is not supported yet.

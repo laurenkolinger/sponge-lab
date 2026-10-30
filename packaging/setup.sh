@@ -36,9 +36,12 @@ curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 "https://github.com/ast
   | tar -xz -C "$WORK" --strip-components=1
 export UV_PYTHON_INSTALL_DIR="$SUPPORT/python"
 export UV_CACHE_DIR="$WORK/cache"
-export UV_PYTHON_PREFERENCE="only-managed"
+# Use a Python 3.14 already on the computer, and download one only if there is none.
+export UV_PYTHON_PREFERENCE="system"
+# An app opened from the Dock searches only the system folders, so name the usual installs.
+export PATH="/opt/homebrew/bin:/usr/local/bin:/Library/Frameworks/Python.framework/Versions/$PYTHON_VERSION/bin:$PATH"
 
-step "Step 2 of 4: downloading Python"
+step "Step 2 of 4: finding Python"
 rm -rf "$RUNTIME"
 "$WORK/uv" venv --python "$PYTHON_VERSION" "$RUNTIME"
 

@@ -37,7 +37,7 @@ app_version() { /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "
 runtime_ready() { [ -x "$PYTHON" ] && cmp -s "$PROJECT/requirements.txt" "$SUPPORT/runtime/.complete"; }
 
 if ! runtime_ready; then
-  osascript -e 'display dialog "Sponge Lab needs Python, OpenCV, and ffmpeg. It will download about 400 MB into its own folder and tell you each step. This takes a few minutes." with title "Set up Sponge Lab" buttons {"Cancel", "Download"} default button "Download"' > /dev/null || exit 0
+  osascript -e 'display dialog "Sponge Lab needs Python, OpenCV, and ffmpeg. It will download what is missing, up to about 400 MB, into its own folder and tell you each step. This takes a few minutes." with title "Set up Sponge Lab" buttons {"Cancel", "Download"} default button "Download"' > /dev/null || exit 0
   # Setup replaces the Python a running server uses, so the server stops first.
   launchctl bootout "$SERVICE" > /dev/null 2>&1
   if ! /bin/bash "$HERE/../Resources/setup.sh"; then

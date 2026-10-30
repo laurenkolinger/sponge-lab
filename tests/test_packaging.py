@@ -247,6 +247,17 @@ def test_a_start_reloads_the_definition_launchd_holds(rig: Rig):
     assert order == ["bootout", "bootstrap", "kickstart"]
 
 
+def test_python_that_was_removed_sets_up_again(tmp_path: Path):
+    made = Rig(tmp_path)
+    python = made.support / "runtime" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.symlink_to(tmp_path / "python-that-is-gone")
+    shutil.copy(made.requirements, made.support / "runtime" / ".complete")
+    write_setup(made, 'touch "$HOME/setup_ran"; exit 1')
+    assert made.launch().returncode == 1
+    assert (made.home / "setup_ran").exists()
+
+
 def test_new_requirements_set_up_again(rig: Rig):
     rig.requirements.write_text("numpy==2\n")
     write_setup(rig, 'touch "$HOME/setup_ran"; exit 1')
@@ -257,6 +268,11 @@ def test_new_requirements_set_up_again(rig: Rig):
 @pytest.mark.parametrize("script", ["packaging/launch.sh", "packaging/scripts/postinstall", "packaging/setup.sh", "packaging/build_pkg.sh"])
 def test_shell_scripts_parse_under_the_system_bash(script: str):
     assert subprocess.run(["/bin/bash", "-n", str(ROOT / script)]).returncode == 0
+
+
+def test_setup_looks_for_python_where_a_dock_app_cannot_see_it():
+    text = (ROOT / "packaging" / "setup.sh").read_text()
+    assert 'UV_PYTHON_PREFERENCE="system"' in text and "/opt/homebrew/bin" in text
 
 
 def test_requirements_pin_every_download():
