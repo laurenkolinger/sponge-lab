@@ -9,7 +9,7 @@ from pathlib import Path
 
 from screener.project import read_project
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 

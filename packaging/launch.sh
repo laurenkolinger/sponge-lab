@@ -63,7 +63,6 @@ service = {
         "PATH": f"{tools}:/usr/bin:/bin:/usr/sbin:/sbin",
         "SCREENER_DATA_DIR": f"{support}/data",
         "SCREENER_CACHE_DIR": f"{support}/cache",
-        "SCREENER_EXPORT_ROOT": os.path.expanduser("~/Documents/Sponge Lab Exports"),
         "SCREENER_TRACK_PYTHON": python,
     },
     "StandardOutPath": log,

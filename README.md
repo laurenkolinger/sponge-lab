@@ -38,6 +38,10 @@ A stretch counts as watched while the video plays forward with the tab in view a
 
 To show reference counts, copy an earlier `observations.csv` to `reference_observations.csv` in the data folder. It needs the columns `Sponge Type` and `FileName`.
 
+## Add a genus or species
+
+Type the name in the wheel or the filter box. When nothing matches, press Enter, or click **Add** in the filter box, then confirm. A name with a hyphen or a period goes in the filter box, because the wheel does not take those keys. The name joins the list as Phase 3 with a code such as CINA, and stays in `custom_species.csv` in the data folder. Delete its row there to remove it.
+
 ## Species names
 
 `config/species.csv` holds current names. When a name changes, keep the code and add the earlier name to `config/species_name_changes.csv`. A search for the old name still finds the species, and the guide shows a notice.
@@ -53,7 +57,7 @@ Everything lives in your account:
 - App: `~/Applications/Sponge Lab by VICAR.app`
 - Sightings, images, and settings: `~/Library/Application Support/Sponge Lab by VICAR/data/`
 - Video cache, capped at 60 GB: `~/Library/Application Support/Sponge Lab by VICAR/cache/`
-- Exports: `~/Documents/Sponge Lab Exports/`
+- Exports: click **Export** and the browser downloads one zip with the tables, frames, and crops.
 
 To stop the server:
 
@@ -61,7 +65,7 @@ To stop the server:
 launchctl kill SIGTERM gui/$(id -u)/org.vicar.sponge-lab.server
 ```
 
-To uninstall, run the commands below and remove the Dock icon. Your exports stay in Documents.
+To uninstall, run the commands below and remove the Dock icon.
 
 ```bash
 launchctl bootout gui/$(id -u)/org.vicar.sponge-lab.server
