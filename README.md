@@ -44,9 +44,9 @@ Press C or click **Compare** in the guide for one photo of each species, side by
 
 Drag the edge between any two panes to resize them, or focus the edge and use the arrow keys. Double-click an edge for the default size. The app remembers your sizes in this browser.
 
-## Export videos
+## Export
 
-**Export** downloads the tables, frames, and crops in about a second. **Export videos** downloads all of that plus each video with a sighting, in `videos_tracked/`, with every ID and species code drawn on its tracked position in the phase colors. Review points show in amber. Rendering runs in the background for a few minutes per video while you keep working, and the browser downloads the zip when it finishes. A video whose sightings have not changed reuses its last render.
+**Export** opens a list of the sites and videos with sightings. Uncheck what you want left out, and the app remembers that in this browser. You then download one zip with the tables, frames, crops, and each chosen video, in `videos_tracked/`, with every ID and species code drawn on its tracked position in the phase colors. Review points show in amber on the videos and stay out of the tables. Rendering runs in the background for a few minutes per video while you keep working, and the browser downloads the zip when it finishes. A video whose sightings have not changed reuses its last render.
 
 ## Add a genus or species
 
@@ -67,7 +67,7 @@ Everything lives in your account:
 - App: `~/Applications/Sponge Lab by VICAR.app`
 - Sightings, images, and settings: `~/Library/Application Support/Sponge Lab by VICAR/data/`
 - Video cache, capped at 60 GB: `~/Library/Application Support/Sponge Lab by VICAR/cache/`
-- Exports: click **Export** and the browser downloads one zip with the tables, frames, and crops.
+- Exports: click **Export**, choose the sites and videos, and the browser downloads one zip.
 
 To stop the server:
 
