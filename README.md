@@ -38,6 +38,12 @@ A stretch counts as watched while the video plays forward with the tab in view a
 
 To show reference counts, copy an earlier `observations.csv` to `reference_observations.csv` in the data folder. It needs the columns `Sponge Type` and `FileName`.
 
+## Compare species and resize panes
+
+Press C or click **Compare** in the guide for one photo of each species, side by side beside the video. Phases 1 and 2 show first, and the phase buttons add or hide a phase. Click a photo to enlarge it, or a name to see all of that species' photos. To choose which photo stands for a species, click the star on it in the species view. A species with no guide photo shows your first crop of it.
+
+Drag the edge between any two panes to resize them, or focus the edge and use the arrow keys. Double-click an edge for the default size. The app remembers your sizes in this browser.
+
 ## Add a genus or species
 
 Type the name in the wheel or the filter box. When nothing matches, press Enter, or click **Add** in the filter box, then confirm. A name with a hyphen or a period goes in the filter box, because the wheel does not take those keys. The name joins the list as Phase 3 with a code such as CINA, and stays in `custom_species.csv` in the data folder. Delete its row there to remove it.
@@ -86,7 +92,7 @@ Tests:
 
 ```bash
 python3 -m pytest tests -q
-node --test tests/test_track_math.mjs tests/test_scrub.mjs tests/test_wheel.mjs tests/test_geometry.mjs tests/test_coverage.mjs
+node --test tests/test_track_math.mjs tests/test_scrub.mjs tests/test_wheel.mjs tests/test_geometry.mjs tests/test_coverage.mjs tests/test_panes.mjs
 ```
 
 The end-to-end tests need Chrome, ffmpeg, and node 20.10 or newer. Build the installer with:
