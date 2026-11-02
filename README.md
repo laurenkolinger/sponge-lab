@@ -4,6 +4,8 @@
 
 Sponge Lab builds sponge ground truth from reef survey video. You watch a transect, click a sponge, and pick its species in a wheel. OpenCV follows the sponge through the video, and the app exports a table, frames, and crops. The Coverage grid shows, for each target species and video, what you tagged and how much of the video you watched.
 
+![Sponge Lab playing a reef survey video, with species labels following tagged sponges, the video list on the left, and the species guide, sightings, and species tally on the right](docs/sponge-lab-demo.gif)
+
 Sponge Lab keeps no videos. It streams them from an S3 bucket that you choose in project setup, with the TCRMP videos filled in.
 
 ## Install on a Mac
