@@ -1,9 +1,11 @@
 """The dated export package for OnDeck AI.
 
 One call writes ``<export root>/spongeGroundTruth_<YYYYMMDD>`` with
-observations.csv, tracks.csv, videos_screened.csv, the frame and the crop of
-every labeled sighting, and a README that explains the columns and the
-conventions.
+observations.csv, tracks.csv, videos_screened.csv, three summary tables
+(species_summary.csv, site_summary.csv, and video_summary.csv, computed with
+screener.diversity from the exported rows), the frame and the crop of every
+labeled sighting, and a README that explains the columns and the conventions.
+A list of species codes narrows the package to those species.
 
 Later points (sightings with no species yet) stay out of the package, and the
 README says how many stayed out. The observations.csv of a package has no
@@ -29,10 +31,12 @@ import sys
 from collections import Counter
 from datetime import date
 from pathlib import Path
-from typing import Collection, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, Collection, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 from screener.config import CROP_SIZE, PLAYABLE_EXTENSIONS, VERSION, VIDEO_EXTENSIONS
+from screener.diversity import DECIMALS, UNKNOWN_CODE, UNKNOWN_SITE, Taxon, diversity_payload
 from screener.keys import extension_of
+from screener.species import Species, species_by_code
 from screener.store import (
     CROPS_FOLDER,
     FRACTION_DECIMALS,
@@ -45,6 +49,7 @@ from screener.store import (
     SCREENED_FILE,
     SECONDS_DECIMALS,
     STATUS_DONE,
+    TARGET_SEPARATOR,
     TIME_MATCH_SECONDS,
     ObservationStore,
     StoreError,
@@ -62,6 +67,23 @@ EXPORT_COLUMNS = [column for column in OBSERVATION_COLUMNS if column != LABEL_ST
 # stay empty for a sighting that was marked with a point.
 TRACKS_FILE = "tracks.csv"
 TRACK_COLUMNS = ["ID", "SpeciesCode", "TimeSeconds", "X", "Y", "BoxX", "BoxY", "BoxW", "BoxH", "Score"]
+
+# The summary tables, computed from the exported rows.
+SPECIES_SUMMARY_FILE = "species_summary.csv"
+SITE_SUMMARY_FILE = "site_summary.csv"
+VIDEO_SUMMARY_FILE = "video_summary.csv"
+SPECIES_SUMMARY_COLUMNS = [
+    "Code", "ScientificName", "Phase", "Genus", "Family", "Order", "Class", "Sightings", "Videos", "Sites",
+]
+SITE_SUMMARY_COLUMNS = [
+    "Site", "Videos", "Sightings", "Species", "Genera", "Families", "Orders", "Shannon", "Simpson", "Chao1",
+    "SpeciesCodes",
+]
+VIDEO_SUMMARY_COLUMNS = [
+    "FileName", "S3Key", "Site", "Transect", "Date", "Sightings", "Species", "Genera", "Families", "Orders",
+    "Shannon", "SpeciesCodes",
+]
+PHASE_PREFIX = "Phase "
 
 PACKAGE_PREFIX = "spongeGroundTruth_"
 PACKAGE_DATE_FORMAT = "%Y%m%d"
@@ -145,10 +167,86 @@ SCREENED_COLUMN_NOTES: Dict[str, str] = {
     "FirstOpened": "When an annotator first opened the video, in UTC.",
     "MarkedDone": "When the annotator marked the video done, in UTC. Empty while the video is in progress.",
 }
+SUMMARY_INTRO = (
+    "The three summary files describe the sightings in this package. Each sighting counts as one individual. The "
+    "species counts and the indices leave out UNKN (Unknown sponge). A sample video is a video with at least one "
+    "sighting in this package or with the Status `done` in videos_screened.csv. The screening targets chosen "
+    "species, so the indices describe the sightings, not the reef."
+)
+TAXONOMY_NOTE = (
+    "of the genus from config/taxonomy.csv, which follows the World Register of Marine Species (WoRMS). Empty for "
+    "UNKN and for a genus that file does not list."
+)
+SPECIES_SUMMARY_COLUMN_NOTES: Dict[str, str] = {
+    "Code": "Four letter species code from config/species.csv.",
+    "ScientificName": "Scientific name of the species.",
+    "Phase": (
+        "Screening phase: `Phase 1` and `Phase 2` for the species in Parts 1 and 2 of the ID guide, `Phase 3` for "
+        "Part 3 and for species added while screening. Empty for UNKN."
+    ),
+    "Genus": "Genus, the first word of the scientific name. Empty for UNKN.",
+    "Family": "Family " + TAXONOMY_NOTE,
+    "Order": "Order " + TAXONOMY_NOTE,
+    "Class": "Class " + TAXONOMY_NOTE,
+    "Sightings": "Number of rows in observations.csv for this species.",
+    "Videos": "Number of videos with at least one sighting of this species.",
+    "Sites": "Number of sites with at least one sighting of this species.",
+}
+SUMMARY_SITE_NOTE = (
+    f"Site name, as in the Site column of observations.csv. `{UNKNOWN_SITE}` holds the videos whose file name is "
+    "outside the TCRMP pattern."
+)
+SUMMARY_COUNT_NOTES: Dict[str, str] = {
+    "Sightings": "Number of its rows in observations.csv, UNKN included.",
+    "Species": "Number of distinct species codes among the sightings, UNKN left out.",
+    "Genera": "Number of distinct genera among those species.",
+    "Families": "Number of distinct families among those species. A genus missing from config/taxonomy.csv adds none.",
+    "Orders": "Number of distinct orders among those species. A genus missing from config/taxonomy.csv adds none.",
+    "Shannon": (
+        "Shannon index H', the negative sum of p ln p over the species, where p is the share of the sightings, with "
+        "three decimals. Empty without a sighting."
+    ),
+    "SpeciesCodes": "Codes of the species counted in Species, in code order, separated by semicolons.",
+}
+SITE_SUMMARY_COLUMN_NOTES: Dict[str, str] = {
+    "Site": SUMMARY_SITE_NOTE,
+    "Videos": "Number of sample videos at the site.",
+    **SUMMARY_COUNT_NOTES,
+    "Simpson": (
+        "Simpson index 1 - D, where D is the sum of p squared over the species, with three decimals. Empty without "
+        "a sighting."
+    ),
+    "Chao1": (
+        "Bias-corrected Chao1 estimate of the number of species, S + F1 (F1 - 1) / (2 (F2 + 1)), where S counts the "
+        "species and F1 and F2 count the species seen once and twice, with three decimals. Empty without a sighting."
+    ),
+}
+VIDEO_SUMMARY_COLUMN_NOTES: Dict[str, str] = {
+    "FileName": "File name of the video.",
+    "S3Key": "Full key of the video in the uviai S3 bucket. The key identifies the video.",
+    "Site": SUMMARY_SITE_NOTE,
+    "Transect": "Transect label, as in the Transect column of observations.csv or else from the video file name.",
+    "Date": "Survey date from the video file name, as YYYY-MM-DD. Empty when the name is outside the TCRMP pattern.",
+    **SUMMARY_COUNT_NOTES,
+}
 
 
 class ExportError(Exception):
     """Raised when an export package cannot be written in full."""
+
+
+class SummaryTables(NamedTuple):
+    """The rows of the three summary files, as ``{column: text}`` dicts.
+
+    Attributes:
+        species: One row per species with a sighting, in code order.
+        sites: One row per site of the sample videos, in site order.
+        videos: One row per sample video, by site, date, transect, and name.
+    """
+
+    species: List[Dict[str, str]]
+    sites: List[Dict[str, str]]
+    videos: List[Dict[str, str]]
 
 
 class ExportResult(NamedTuple):
@@ -206,6 +304,91 @@ def _decimal_text(value: float, decimals: int) -> str:
         reads ``0.0000`` even when it is a hair below zero.
     """
     return f"{round(value, decimals) + 0.0:.{decimals}f}"
+
+
+def _index_text(value: Optional[float]) -> str:
+    """Format a diversity index for a summary cell.
+
+    Args:
+        value: The index, or None when it is undefined.
+
+    Returns:
+        The index with DECIMALS decimals, or "" for None.
+    """
+    return "" if value is None else _decimal_text(value, DECIMALS)
+
+
+def _summary_cells(summary: Mapping[str, Any]) -> Dict[str, str]:
+    """Lay out the cells that a site row and a video row share.
+
+    Args:
+        summary: One summary from screener.diversity.summarize.
+
+    Returns:
+        The Sightings, Species, Genera, Families, Orders, Shannon, and
+        SpeciesCodes cells. SpeciesCodes leaves out UNKN, as Species does.
+    """
+    return {
+        "Sightings": str(summary["sightings"]),
+        "Species": str(summary["species"]),
+        "Genera": str(summary["genus"]),
+        "Families": str(summary["family"]),
+        "Orders": str(summary["order"]),
+        "Shannon": _index_text(summary["shannon"]),
+        "SpeciesCodes": TARGET_SEPARATOR.join(code for code in summary["counts"] if code != UNKNOWN_CODE),
+    }
+
+
+def _summary_tables(payload: Mapping[str, Any]) -> SummaryTables:
+    """Turn the diversity of the exported rows into the rows of the three summary files.
+
+    Args:
+        payload: The screener.diversity.diversity_payload answer for the exported
+            rows and the screened rows of the package.
+
+    Returns:
+        The SummaryTables. Phase reads ``Phase 1``, ``Phase 2``, or ``Phase 3``,
+        and stays empty for UNKN.
+    """
+    taxa = {item["code"]: item for item in payload["taxa"]}
+    sites_per_code = Counter(code for site in payload["sites"] for code in site["counts"])
+    species = [
+        {
+            "Code": code,
+            "ScientificName": taxa[code]["name"],
+            "Phase": PHASE_PREFIX + taxa[code]["part"] if taxa[code]["part"] else "",
+            "Genus": taxa[code]["genus"],
+            "Family": taxa[code]["family"],
+            "Order": taxa[code]["order"],
+            "Class": taxa[code]["class"],
+            "Sightings": str(count),
+            "Videos": str(payload["all"]["video_counts"][code]),
+            "Sites": str(sites_per_code[code]),
+        }
+        for code, count in payload["all"]["counts"].items()
+    ]
+    sites = [
+        {
+            "Site": site["site"],
+            "Videos": str(site["videos"]),
+            **_summary_cells(site),
+            "Simpson": _index_text(site["simpson"]),
+            "Chao1": _index_text(site["chao1"]),
+        }
+        for site in payload["sites"]
+    ]
+    videos = [
+        {
+            "FileName": video["name"],
+            "S3Key": video["key"],
+            "Site": video["site"],
+            "Transect": video["transect"],
+            "Date": video["date"],
+            **_summary_cells(video),
+        }
+        for video in payload["videos"]
+    ]
+    return SummaryTables(species, sites, videos)
 
 
 def _track_rows(store: ObservationStore, rows: Sequence[Mapping[str, str]]) -> List[Dict[str, str]]:
@@ -271,6 +454,8 @@ def _readme_text(
     today: date,
     unlabeled_left_out: int,
     track_rows: Sequence[Mapping[str, str]],
+    tables: SummaryTables,
+    offered_codes: Optional[Sequence[str]],
 ) -> str:
     """Write the README of a package.
 
@@ -280,13 +465,17 @@ def _readme_text(
         today: The export date.
         unlabeled_left_out: How many Later points the package leaves out.
         track_rows: The tracks.csv rows in the package.
+        tables: The rows of the three summary files.
+        offered_codes: The codes with sightings before a species choice
+            narrowed the package, or None when every species is in it.
 
     Returns:
-        Markdown text with the title, the date, the counts per species, the
+        Markdown text with the title, the date, which species the package
+        holds when a species choice narrowed it, the counts per species, the
         number of videos, the number of Later points left out (when above
-        zero), the conventions, and the meaning of every column of the three
-        CSV files, with how many track points and tracked sightings the
-        package holds.
+        zero), the conventions, and the meaning of every column of the six
+        CSV files, with how many rows each holds and how many tracked
+        sightings the package holds.
     """
     converted_formats = sorted(extension.upper() for extension in VIDEO_EXTENSIONS - PLAYABLE_EXTENSIONS)
     from_converted = sum(1 for row in rows if extension_of(row["S3Key"]) not in PLAYABLE_EXTENSIONS)
@@ -301,12 +490,24 @@ def _readme_text(
         f"Sponge Lab {VERSION} wrote this package. An annotator logged each sighting by pausing a TCRMP "
         "transect video, marking the sponge, and choosing the species.",
         "",
+    ]
+    if offered_codes is not None:
+        held = sorted({row["SpeciesCode"] for row in rows})
+        lines += [
+            f"This package holds {len(held)} of the {len(offered_codes)} species with sightings: {', '.join(held)}.",
+            "",
+        ]
+    lines += [
         "## Contents",
         "",
         f"- `{OBSERVATIONS_FILE}`: one row per sponge sighting ({_plural(len(rows), 'row')}).",
         f"- `{TRACKS_FILE}`: one row per track point of each sighting that has a track "
         f"({_plural(len(track_rows), 'row')} for {_plural(len({row['ID'] for row in track_rows}), 'sighting')}).",
         f"- `{SCREENED_FILE}`: one row per video that an annotator opened ({_plural(len(screened), 'row')}).",
+        f"- `{SPECIES_SUMMARY_FILE}`: one row per species with a sighting ({_plural(len(tables.species), 'row')}).",
+        f"- `{SITE_SUMMARY_FILE}`: one row per site, with its richness and diversity indices "
+        f"({_plural(len(tables.sites), 'row')}).",
+        f"- `{VIDEO_SUMMARY_FILE}`: one row per sample video, with its richness ({_plural(len(tables.videos), 'row')}).",
         f"- `{FRAMES_FOLDER}/`: the full video frame of each sighting, as JPEG, at the resolution of the video.",
         f"- `{CROPS_FOLDER}/`: the sponge crop of each sighting, as PNG. A click crops a {CROP_SIZE} pixel square "
         "around the point. A dragged box crops the box.",
@@ -356,6 +557,14 @@ def _readme_text(
     lines += ["", TRACKS_BOX_NOTE]
     lines += ["", f"## Columns of {SCREENED_FILE}", ""]
     lines += _table(["Column", "Meaning"], screened_notes)
+    lines += ["", "## Summary files", "", SUMMARY_INTRO]
+    for name, columns, notes in (
+        (SPECIES_SUMMARY_FILE, SPECIES_SUMMARY_COLUMNS, SPECIES_SUMMARY_COLUMN_NOTES),
+        (SITE_SUMMARY_FILE, SITE_SUMMARY_COLUMNS, SITE_SUMMARY_COLUMN_NOTES),
+        (VIDEO_SUMMARY_FILE, VIDEO_SUMMARY_COLUMNS, VIDEO_SUMMARY_COLUMN_NOTES),
+    ):
+        lines += ["", f"## Columns of {name}", ""]
+        lines += _table(["Column", "Meaning"], [[f"`{column}`", notes[column]] for column in columns])
     return "\n".join(lines) + "\n"
 
 
@@ -415,6 +624,8 @@ def _fill_package(
     today: date,
     unlabeled_left_out: int,
     track_rows: Sequence[Mapping[str, str]],
+    tables: SummaryTables,
+    offered_codes: Optional[Sequence[str]],
 ) -> None:
     """Write the CSV files, the images, and the README into a new package folder.
 
@@ -426,6 +637,9 @@ def _fill_package(
         today: The export date.
         unlabeled_left_out: How many Later points the package leaves out.
         track_rows: The tracks.csv rows, one per track point.
+        tables: The rows of the three summary files.
+        offered_codes: The codes with sightings before a species choice
+            narrowed the package, or None when every species is in it.
 
     Raises:
         ExportError: Naming the first file that could not be written, or the
@@ -435,6 +649,9 @@ def _fill_package(
         write_csv_atomic(package / OBSERVATIONS_FILE, EXPORT_COLUMNS, rows)
         write_csv_atomic(package / TRACKS_FILE, TRACK_COLUMNS, track_rows)
         write_csv_atomic(package / SCREENED_FILE, SCREENED_COLUMNS, screened)
+        write_csv_atomic(package / SPECIES_SUMMARY_FILE, SPECIES_SUMMARY_COLUMNS, tables.species)
+        write_csv_atomic(package / SITE_SUMMARY_FILE, SITE_SUMMARY_COLUMNS, tables.sites)
+        write_csv_atomic(package / VIDEO_SUMMARY_FILE, VIDEO_SUMMARY_COLUMNS, tables.videos)
     except StoreError as error:
         raise ExportError(str(error)) from error
     for obs_id, source, inside in copies:
@@ -450,19 +667,31 @@ def _fill_package(
             raise ExportError(f"{target}: the image of {obs_id} did not arrive whole from {source}")
     readme = package / README_FILE
     try:
-        readme.write_text(_readme_text(rows, screened, today, unlabeled_left_out, track_rows), encoding="utf-8")
+        text = _readme_text(rows, screened, today, unlabeled_left_out, track_rows, tables, offered_codes)
+        readme.write_text(text, encoding="utf-8")
     except OSError as error:
         raise ExportError(f"{readme}: could not write the README: {error}") from error
 
 
-def export_package(store: ObservationStore, export_root: Path, today: date, keys: Optional[Collection[str]] = None) -> ExportResult:
+def export_package(
+    store: ObservationStore,
+    export_root: Path,
+    today: date,
+    keys: Optional[Collection[str]] = None,
+    *,
+    codes: Optional[Collection[str]] = None,
+    species: Optional[Sequence[Species]] = None,
+    taxonomy: Optional[Mapping[str, Taxon]] = None,
+    site_names: Optional[Mapping[str, str]] = None,
+) -> ExportResult:
     """Write a dated export package of the labeled sightings and check that every image arrived.
 
     Later points are left out, with their images and tracks, and the README
     states how many. The rows, the left-out count, and the images come from
     one read of observations.csv. tracks.csv lists the track points of the
     labeled sightings; it holds only its header when none has a track. A
-    track saved for another moment than its row is skipped.
+    track saved for another moment than its row is skipped. The three summary
+    files describe the exported rows and the sample videos of the package.
 
     Args:
         store: The store to export. The export reads it and changes nothing.
@@ -471,6 +700,16 @@ def export_package(store: ObservationStore, export_root: Path, today: date, keys
             the drive is not connected.
         today: The date for the package name and the README.
         keys: The videos to export, by S3 key, or None for every video.
+        codes: The species to export, by code, or None for every species.
+            The Sightings cells of videos_screened.csv count only these.
+        species: The species list, custom species included, for the names and
+            phases of the summary files. None gives an empty list, so every
+            code takes the name of its rows and no phase.
+        taxonomy: ``{genus: Taxon}`` for the family, order, and class of the
+            summary files. None gives an empty table, so they stay empty.
+        site_names: ``{site code: site name}`` for the site of a done video
+            without rows. None gives an empty mapping, so such a video falls
+            under its site code.
 
     Returns:
         An ExportResult. Its ``path`` is the package folder,
@@ -483,7 +722,8 @@ def export_package(store: ObservationStore, export_root: Path, today: date, keys
             wrong type.
         ExportError: When export_root is not an existing folder, the store
             cannot be parsed, the store has no labeled sightings (the message
-            says how many Later points it holds), a referenced image
+            says how many Later points it holds), the chosen species have no
+            sightings among the chosen videos, a referenced image
             is missing or a track file of a labeled sighting cannot be read
             (the message names the first such file and nothing is written),
             or a file cannot be written or does not arrive whole (the partial
@@ -495,6 +735,14 @@ def export_package(store: ObservationStore, export_root: Path, today: date, keys
         raise ValueError(f"export_root: expected a folder path, got {type(export_root).__name__}")
     if not isinstance(today, date):
         raise ValueError(f"today: expected a date, got {type(today).__name__}")
+    if codes is not None and not isinstance(codes, (list, tuple, set, frozenset)):
+        raise ValueError(f"codes: expected a list of species codes, got {type(codes).__name__}")
+    if codes is not None and not all(isinstance(code, str) for code in codes):
+        raise ValueError("codes: expected species codes as text")
+    listed = list(species_by_code([] if species is None else species).values())
+    for name, value in (("taxonomy", taxonomy), ("site_names", site_names)):
+        if value is not None and not isinstance(value, Mapping):
+            raise ValueError(f"{name}: expected a mapping, got {type(value).__name__}")
     root = Path(export_root)
     if not root.is_dir():
         raise ExportError(
@@ -517,9 +765,21 @@ def export_package(store: ObservationStore, export_root: Path, today: date, keys
         )
     if not rows:
         raise ExportError(f"no sightings to export: {store.observations_path} has no rows yet")
+    offered_codes = None
+    if codes is not None:
+        offered_codes = sorted({row["SpeciesCode"] for row in rows})
+        chosen = set(codes)
+        rows = [row for row in rows if row["SpeciesCode"] in chosen]
+        if not rows:
+            scope = "" if keys is None else " in the chosen videos"
+            raise ExportError(
+                f"no sightings to export: the chosen species have no sightings{scope} ({', '.join(sorted(chosen))})"
+            )
     counts = Counter(row["S3Key"] for row in rows)
     for row in screened:
         row["Sightings"] = str(counts.get(row["S3Key"], 0))
+    payload = diversity_payload(rows, screened, listed, taxonomy or {}, site_names or {})
+    tables = _summary_tables(payload)
     copies = _image_copies(store, rows)
     for obs_id, source, _inside in copies:
         if not source.is_file():
@@ -527,7 +787,7 @@ def export_package(store: ObservationStore, export_root: Path, today: date, keys
     track_rows = _track_rows(store, rows)
     package = _create_package_folder(root, today)
     try:
-        _fill_package(package, rows, screened, copies, today, unlabeled_left_out, track_rows)
+        _fill_package(package, rows, screened, copies, today, unlabeled_left_out, track_rows, tables, offered_codes)
     except BaseException:
         shutil.rmtree(package, ignore_errors=True)
         raise

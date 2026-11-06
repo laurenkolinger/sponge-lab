@@ -981,6 +981,9 @@ const SCENARIOS = {
     const [later] = await waitRows(s, 1);
     s.fact('laterRow', later);
     await s.waitFor(`document.querySelector('#to-label .to-label-item[data-id="${later.ID}"]')`, 'the Later point in the To label list');
+    s.step('open the Review tab');
+    await clickElement(s, '#tab-review');
+    await s.waitFor(`(() => { const image = document.querySelector('#to-label .to-label-item[data-id="${later.ID}"] .sighting-thumb'); return image && image.complete && image.naturalWidth > 0; })()`, 'the Review thumbnail to load');
     s.fact('toLabelThumbBefore', await s.evaluate(`(() => { const image = document.querySelector('#to-label .to-label-item[data-id="${later.ID}"] .sighting-thumb'); return { src: image.getAttribute('src'), loaded: image.complete && image.naturalWidth > 0 }; })()`));
     s.step('switch to the 2024 video');
     await openVideo(s, config, config.key2024);
@@ -1003,6 +1006,8 @@ const SCENARIOS = {
     await s.waitFor(`(${S}.state.rows.find((row) => row.ID === '${later.ID}') || {}).LabelStatus === 'labeled'`, 'the row to read labeled');
     await s.waitFor(`document.getElementById('to-label-count').textContent === '0'`, 'the To label count to read 0');
     s.fact('rows', await pageRows(s));
+    s.step('open the Video tab');
+    await clickElement(s, '#tab-video');
     await s.waitFor(`(() => { const image = document.querySelector('#sightings .sighting[data-id="${later.ID}"] .sighting-thumb'); return image && image.complete && image.naturalWidth > 0; })()`, 'the sightings thumbnail to load the new crop');
     s.fact('thumbAfter', await s.evaluate(`(() => { const image = document.querySelector('#sightings .sighting[data-id="${later.ID}"] .sighting-thumb'); return { src: image.getAttribute('src'), loaded: image.complete && image.naturalWidth > 0, missing: image.dataset.missing === 'true' }; })()`));
     s.fact('toLabelAfter', await s.evaluate(`({ count: document.getElementById('to-label-count').textContent, items: document.querySelectorAll('#to-label .to-label-item').length })`));
@@ -1536,10 +1541,10 @@ const SCENARIOS = {
     await s.waitFor(`!${S}.wheel()`, 'the wheel to close on the right-click');
     s.fact('afterRightClick', { wheel: await s.evaluate(`Boolean(${S}.wheel())`), pending: await s.evaluate(`Boolean(${S}.state.pending)`), mode: await s.evaluate(`${S}.state.mode`), clock: await clockDelta(s, STILL_MS) });
     await rewindIfLate(s);
-    s.step('open the wheel, then click the tally panel');
+    s.step('open the wheel, then click the sightings count in the right panel');
     await clickPicture(s, 0.15, 0.20);
     await waitWheel(s, 'new');
-    await clickElement(s, '#tally-total');
+    await clickElement(s, '#sightings-count');
     await s.waitFor(`!${S}.wheel()`, 'the wheel to close on the outside click');
     s.fact('afterOutsideClick', { wheel: await s.evaluate(`Boolean(${S}.wheel())`), pending: await s.evaluate(`Boolean(${S}.state.pending)`), mode: await s.evaluate(`${S}.state.mode`), clock: await clockDelta(s, STILL_MS) });
     s.fact('rows', await pageRows(s));
@@ -1651,7 +1656,6 @@ const SCENARIOS = {
     await loadApp(s);
     await openVideo(s, config, config.key2024);
     const width = (selector) => `document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect().width`;
-    const height = (selector) => `document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect().height`;
     const center = (id) => s.evaluate(`(() => { const box = document.querySelector(${JSON.stringify(id)}).getBoundingClientRect(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; })()`);
     const drag = async (id, dx, dy) => {
       const from = await center(id);
@@ -1665,7 +1669,6 @@ const SCENARIOS = {
       left: await s.evaluate(width('.browser')),
       right: await s.evaluate(width('.log')),
       guide: await s.evaluate(width('#guide')),
-      review: await s.evaluate(height('.log-later')),
       stage: await s.evaluate(width('#stage')),
     });
     s.step('read the first sizes');
@@ -1675,7 +1678,6 @@ const SCENARIOS = {
     await drag('#pane-left', 60, 0);
     await drag('#pane-right', -50, 0);
     await drag('#pane-guide', -70, 0);
-    await drag('.log-later .pane-handle', 0, -40);
     s.fact('dragged', await read());
     s.step('try to crush the video');
     await drag('#pane-guide', -2000, 0);

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from screener import export as export_module
+from screener.diversity import Taxon
 from screener.export import ExportError, export_package
 from screener.species import Species
 from screener.store import OBSERVATION_COLUMNS, SCREENED_COLUMNS, ObservationStore, StoreError
@@ -91,7 +92,17 @@ def read_csv(path):
 def test_export_creates_dated_package_with_all_files(filled, export_root):
     package = export_package(filled, export_root, TODAY).path
     assert package == export_root / "spongeGroundTruth_20260921"
-    assert names_in(package) == ["README.md", "crops", "frames", "observations.csv", "tracks.csv", "videos_screened.csv"]
+    assert names_in(package) == [
+        "README.md",
+        "crops",
+        "frames",
+        "observations.csv",
+        "site_summary.csv",
+        "species_summary.csv",
+        "tracks.csv",
+        "video_summary.csv",
+        "videos_screened.csv",
+    ]
     rows = filled.rows()
     assert names_in(package / "frames") == sorted(row["FrameFileName"] for row in rows)
     assert names_in(package / "crops") == sorted(row["CropFileName"] for row in rows)
@@ -361,7 +372,7 @@ def test_csv_that_cannot_be_written_raises_and_removes_the_package(filled, expor
 
 
 def test_readme_that_cannot_be_written_raises_and_removes_the_package(filled, export_root, monkeypatch):
-    def refuse(rows, screened, today, unlabeled_left_out, track_rows):
+    def refuse(*arguments):
         """Stand in for a README write that hits a full disk."""
         raise OSError(28, "No space left on device")
 
@@ -756,3 +767,203 @@ def test_module_exposes_the_planned_interface():
         dir(export_module)
     )
     assert issubclass(ExportError, Exception)
+
+
+# ----- summary files -----
+
+TAXONOMY = {
+    "Aplysina": Taxon("Aplysina", "Aplysinidae", "Verongiida", "Demospongiae", "131975"),
+    "Cliona": Taxon("Cliona", "Clionaidae", "Clionaida", "Demospongiae", "132026"),
+}
+KEY_DONE_EMPTY = "TCRMP_video_ondeck/2024Annual/TCRMP20241022_video_BIT_T2.MP4"
+SPECIES_SUMMARY_HEADER = ["Code", "ScientificName", "Phase", "Genus", "Family", "Order", "Class", "Sightings", "Videos", "Sites"]
+SITE_SUMMARY_HEADER = [
+    "Site", "Videos", "Sightings", "Species", "Genera", "Families", "Orders", "Shannon", "Simpson", "Chao1", "SpeciesCodes",
+]
+VIDEO_SUMMARY_HEADER = [
+    "FileName", "S3Key", "Site", "Transect", "Date", "Sightings", "Species", "Genera", "Families", "Orders", "Shannon",
+    "SpeciesCodes",
+]
+
+
+def export_full(store, export_root, **changes):
+    """Export with the test species, taxonomy, and sites, and return the package folder."""
+    arguments = {"species": SPECIES, "taxonomy": TAXONOMY, "site_names": SITES, **changes}
+    return export_package(store, export_root, TODAY, **arguments).path
+
+
+def test_export_writes_species_summary_with_phases_and_ranks(filled, export_root):
+    package = export_full(filled, export_root)
+    # ACAU: 2 rows in the 2024 FLC video and 1 in the 2016 video outside the TCRMP pattern (Unknown site).
+    # Xestospongia is missing from the test taxonomy, so its family, order, and class stay empty.
+    assert read_csv(package / "species_summary.csv") == [
+        SPECIES_SUMMARY_HEADER,
+        ["ACAU", "Aplysina cauliformis", "Phase 1", "Aplysina", "Aplysinidae", "Verongiida", "Demospongiae", "3", "2", "2"],
+        ["CDEL", "Cliona delitrix", "Phase 1", "Cliona", "Clionaidae", "Clionaida", "Demospongiae", "1", "1", "1"],
+        ["XMUT", "Xestospongia muta", "Phase 2", "Xestospongia", "", "", "", "1", "1", "1"],
+    ]
+
+
+def test_export_writes_site_summary_with_hand_worked_indices(filled, export_root):
+    package = export_full(filled, export_root)
+    # Flat Cay holds ACAU 2 and CDEL 1 (N = 3): H' = (2/3) ln 1.5 + (1/3) ln 3 = 0.270310 + 0.366204 = 0.636514;
+    # 1 - D = 1 - (4/9 + 1/9) = 0.444444; Chao1: S = 2, F1 = 1, F2 = 1, so 2 + 1 * 0 / 4 = 2.
+    # A site with one sighting has H' = 0, 1 - D = 0, and Chao1 = 1 + 1 * 0 / 2 = 1.
+    assert read_csv(package / "site_summary.csv") == [
+        SITE_SUMMARY_HEADER,
+        ["Buck Island", "1", "1", "1", "1", "0", "0", "0.000", "0.000", "1.000", "XMUT"],
+        ["Flat Cay", "1", "3", "2", "2", "2", "2", "0.637", "0.444", "2.000", "ACAU;CDEL"],
+        ["Unknown site", "1", "1", "1", "1", "1", "1", "0.000", "0.000", "1.000", "ACAU"],
+    ]
+
+
+def test_export_writes_video_summary_for_every_sample_video(filled, export_root):
+    filled.mark_opened(KEY_DONE_EMPTY, "LO", ["ACAU"])
+    filled.mark_done(KEY_DONE_EMPTY, True, "LO", ["ACAU"])
+    package = export_full(filled, export_root)
+    assert read_csv(package / "video_summary.csv") == [
+        VIDEO_SUMMARY_HEADER,
+        ["TCRMP20090611_video_BIT_T1-6.MTS", KEY_2009_MTS, "Buck Island", "T1-6", "2009-06-11", "1", "1", "1", "0", "0", "0.000", "XMUT"],
+        ["TCRMP20241022_video_BIT_T2.MP4", KEY_DONE_EMPTY, "Buck Island", "T2", "2024-10-22", "0", "0", "0", "0", "0", "", ""],
+        ["TCRMP20241022_video_FLC_T1.MP4", KEY_2024, "Flat Cay", "T1", "2024-10-22", "3", "2", "2", "2", "2", "0.637", "ACAU;CDEL"],
+        ["MVI_0203.MOV", KEY_2016_ODD, "Unknown site", "", "", "1", "1", "1", "1", "1", "0.000", "ACAU"],
+    ]
+    sites = read_csv(package / "site_summary.csv")
+    assert sites[1][:3] == ["Buck Island", "2", "1"]
+
+
+def test_summary_files_leave_out_later_points_and_count_unknown_as_a_sighting_only(store, export_root):
+    add(store, frame=JPEG + b"1", crop=PNG + b"1")
+    add(store, species_code="UNKN", frame=JPEG + b"2", crop=PNG + b"2")
+    add_later(store, tag=b"3")
+    package = export_full(store, export_root)
+    species = read_csv(package / "species_summary.csv")
+    assert species[2] == ["UNKN", "Unknown sponge", "", "", "", "", "", "1", "1", "1"]
+    assert read_csv(package / "site_summary.csv")[1] == ["Flat Cay", "1", "2", "1", "1", "1", "1", "0.000", "0.000", "1.000", "ACAU"]
+    assert read_csv(package / "video_summary.csv")[1][5:] == ["2", "1", "1", "1", "1", "0.000", "ACAU"]
+
+
+def test_summary_files_without_the_species_list_or_taxonomy_use_the_row_names(filled, export_root):
+    package = export_package(filled, export_root, TODAY).path
+    species = read_csv(package / "species_summary.csv")
+    assert species[1] == ["ACAU", "Aplysina cauliformis", "", "Aplysina", "", "", "", "3", "2", "2"]
+    filled.mark_opened(KEY_DONE_EMPTY, "LO", ["ACAU"])
+    filled.mark_done(KEY_DONE_EMPTY, True, "LO", ["ACAU"])
+    videos = read_csv(export_package(filled, export_root, TODAY).path / "video_summary.csv")
+    # Without the site names, the done video without rows falls under its site code, which sorts first.
+    assert videos[1][:3] == ["TCRMP20241022_video_BIT_T2.MP4", KEY_DONE_EMPTY, "BIT"]
+
+
+def test_summary_files_keep_hostile_site_names_in_one_cell(tmp_path, export_root):
+    hostile = {"FLC": 'Reef "A", <script>alert(1)</script> & co', "BIT": "Buck, Islandé"}
+    store = ObservationStore(tmp_path / "data", SPECIES, hostile, lambda: FIXED_NOW)
+    add(store, frame=JPEG + b"1", crop=PNG + b"1")
+    add(store, key=KEY_2009_MTS, species_code="CDEL", frame=JPEG + b"2", crop=PNG + b"2")
+    package = export_full(store, export_root, site_names=hostile)
+    sites = read_csv(package / "site_summary.csv")
+    assert [record[0] for record in sites[1:]] == sorted(hostile.values())
+    assert all(len(record) == len(SITE_SUMMARY_HEADER) for record in sites)
+    videos = read_csv(package / "video_summary.csv")
+    assert {record[2] for record in videos[1:]} == set(hostile.values())
+    assert all(len(record) == len(VIDEO_SUMMARY_HEADER) for record in videos)
+    raw = (package / "site_summary.csv").read_text(encoding="utf-8")
+    assert '"Reef ""A"", <script>alert(1)</script> & co"' in raw
+
+
+def test_readme_documents_the_summary_files(filled, export_root):
+    readme = (export_full(filled, export_root) / "README.md").read_text(encoding="utf-8")
+    assert "- `species_summary.csv`: one row per species with a sighting (3 rows)." in readme
+    assert "- `site_summary.csv`: one row per site, with its richness and diversity indices (3 rows)." in readme
+    assert "- `video_summary.csv`: one row per sample video, with its richness (3 rows)." in readme
+    sections = [
+        ("species_summary.csv", SPECIES_SUMMARY_HEADER),
+        ("site_summary.csv", SITE_SUMMARY_HEADER),
+        ("video_summary.csv", VIDEO_SUMMARY_HEADER),
+    ]
+    starts = [readme.index(f"## Columns of {name}") for name, _columns in sections]
+    assert readme.index("## Columns of videos_screened.csv") < readme.index("## Summary files") < starts[0] < starts[1] < starts[2]
+    for (name, columns), start, end in zip(sections, starts, starts[1:] + [len(readme)]):
+        for column in columns:
+            assert f"| `{column}` |" in readme[start:end], (name, column)
+    lowered = readme.lower()
+    assert "not the reef" in lowered and "unkn" in lowered and "sample video" in lowered
+    assert "species with sightings:" not in readme
+    assert "—" not in readme and "–" not in readme and all(ord(char) < 128 for char in readme)
+
+
+# ----- species choice -----
+
+
+def test_export_with_codes_keeps_only_those_species(filled, export_root):
+    tracked = filled.rows()
+    add_track(filled, tracked[2])
+    result = export_package(filled, export_root, TODAY, codes=["ACAU"], species=SPECIES, taxonomy=TAXONOMY, site_names=SITES)
+    package = result.path
+    exported = read_csv(package / "observations.csv")
+    code_at = export_module.EXPORT_COLUMNS.index("SpeciesCode")
+    assert [record[code_at] for record in exported[1:]] == ["ACAU", "ACAU", "ACAU"]
+    acau = [row for row in filled.rows() if row["SpeciesCode"] == "ACAU"]
+    assert names_in(package / "frames") == sorted(row["FrameFileName"] for row in acau)
+    assert names_in(package / "crops") == sorted(row["CropFileName"] for row in acau)
+    assert read_csv(package / "tracks.csv") == [TRACK_HEADER]
+    screened = read_csv(package / "videos_screened.csv")
+    sightings = {record[0]: record[SCREENED_COLUMNS.index("Sightings")] for record in screened[1:]}
+    assert sightings == {KEY_2024: "2", KEY_2009_MTS: "0"}
+    assert [record[0] for record in read_csv(package / "species_summary.csv")[1:]] == ["ACAU"]
+    # The in-progress BIT video holds no ACAU, so it is no sample video of this package.
+    assert [record[1] for record in read_csv(package / "video_summary.csv")[1:]] == [KEY_2024, KEY_2016_ODD]
+    readme = (package / "README.md").read_text(encoding="utf-8")
+    assert "This package holds 1 of the 3 species with sightings: ACAU." in readme
+    assert "- Sightings: 3" in readme and result.unlabeled_left_out == 0
+
+
+def test_export_with_codes_and_keys_counts_the_species_of_the_chosen_videos(filled, export_root):
+    add_later(filled, key=KEY_2009_MTS)
+    result = export_package(filled, export_root, TODAY, [KEY_2024, KEY_2009_MTS], codes=("XMUT", "ACAU", "ACAU"))
+    readme = (result.path / "README.md").read_text(encoding="utf-8")
+    assert "This package holds 2 of the 3 species with sightings: ACAU, XMUT." in readme
+    assert result.unlabeled_left_out == 1
+    assert len(read_csv(result.path / "observations.csv")) == 4
+
+
+def test_export_with_unknown_codes_raises_and_writes_nothing(filled, export_root):
+    with pytest.raises(ExportError) as caught:
+        export_package(filled, export_root, TODAY, codes=["ZZZZ"])
+    message = str(caught.value)
+    assert message.startswith("no sightings to export: ")
+    assert "the chosen species have no sightings (ZZZZ)" in message
+    assert names_in(export_root) == []
+
+
+def test_export_with_codes_that_leave_no_rows_in_the_chosen_videos_raises(filled, export_root):
+    with pytest.raises(ExportError) as caught:
+        export_package(filled, export_root, TODAY, [KEY_2009_MTS], codes={"CDEL"})
+    assert "the chosen species have no sightings in the chosen videos (CDEL)" in str(caught.value)
+    with pytest.raises(ExportError, match="chosen species have no sightings"):
+        export_package(filled, export_root, TODAY, codes=[])
+    assert names_in(export_root) == []
+
+
+def test_export_with_codes_still_names_a_store_of_later_points_only(store, export_root):
+    add_later(store)
+    with pytest.raises(ExportError, match="no labeled sightings yet"):
+        export_package(store, export_root, TODAY, codes=["ACAU"])
+
+
+@pytest.mark.parametrize(
+    "changes, starts_with",
+    [
+        ({"codes": "ACAU"}, "codes:"),
+        ({"codes": {"ACAU": 1}}, "codes:"),
+        ({"codes": ["ACAU", 7]}, "codes:"),
+        ({"species": "ACAU"}, "species"),
+        ({"species": [SPECIES[0], SPECIES[0]]}, "species"),
+        ({"taxonomy": ["Aplysina"]}, "taxonomy:"),
+        ({"site_names": "FLC"}, "site_names:"),
+    ],
+)
+def test_wrong_species_choice_arguments_raise_value_error(filled, export_root, changes, starts_with):
+    with pytest.raises(ValueError) as caught:
+        export_package(filled, export_root, TODAY, **changes)
+    assert str(caught.value).startswith(starts_with)
+    assert names_in(export_root) == []

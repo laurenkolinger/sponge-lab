@@ -50,7 +50,7 @@ open(request["output"], "wb").write(b"video")
 def make_job(tmp_path: Path, worker_body: str = GOOD_WORKER, videos=None) -> VideoExporter:
     """Build a job with a stand-in worker, package, and zip."""
 
-    def build_package(folder: Path, keys=None) -> Path:
+    def build_package(folder: Path, keys=None, codes=None) -> Path:
         package = folder / "spongeGroundTruth_20261101"
         package.mkdir()
         (package / "observations.csv").write_text("x\n")
@@ -65,7 +65,11 @@ def make_job(tmp_path: Path, worker_body: str = GOOD_WORKER, videos=None) -> Vid
         return archive
 
     listed = [{"name": "a.MP4", "source": "a", "marks": [MARK]}] if videos is None else videos
-    return VideoExporter(tmp_path / "out", Path(sys.executable), make_worker(tmp_path, worker_body), lambda keys: [video for video in listed if keys is None or video["source"] in keys], build_package, zip_package)
+    def collect(keys, codes=None, review=True):
+        """List the stand-in videos of the chosen keys."""
+        return [video for video in listed if keys is None or video["source"] in keys]
+
+    return VideoExporter(tmp_path / "out", Path(sys.executable), make_worker(tmp_path, worker_body), collect, build_package, zip_package)
 
 
 def wait_until_finished(job: VideoExporter) -> dict:
@@ -177,6 +181,71 @@ def test_part_of_the_videos_replaces_only_its_own_old_render(tmp_path: Path):
     wait_until_finished(job)
     names = sorted(item.name.split(".")[0] for item in (tmp_path / "out" / "rendered").glob("*.mp4"))
     assert names == ["a_tracked", "b_tracked"]
+
+
+def test_species_and_review_choices_reach_collect_and_the_package(tmp_path: Path):
+    calls = []
+    job = make_job(tmp_path)
+    collect, build_package = job._collect, job._build_package
+
+    def recording_collect(keys, codes=None, review=True):
+        """Record what the job asks collect for, then answer as before."""
+        calls.append(("collect", keys, codes, review))
+        return collect(keys, codes=codes, review=review)
+
+    def recording_package(folder, keys, codes=None):
+        """Record what the job asks build_package for, then answer as before."""
+        calls.append(("package", keys, codes))
+        return build_package(folder, keys, codes=codes)
+
+    job._collect, job._build_package = recording_collect, recording_package
+    job.start(["a"], "Buck_Island_2species", ["ACAU", "AFUL"], False)
+    status = wait_until_finished(job)
+    assert status["state"] == "done" and status["name"] == "spongeGroundTruth_with_videos_Buck_Island_2species_20261101.zip"
+    job.start()
+    wait_until_finished(job)
+    assert calls == [
+        ("collect", ["a"], ["ACAU", "AFUL"], False),
+        ("package", ["a"], ["ACAU", "AFUL"]),
+        ("collect", None, None, True),
+        ("package", None, None),
+    ]
+
+
+@pytest.mark.parametrize("choice", [{"codes": ["ACAU"]}, {"review": False}])
+def test_a_species_or_review_choice_keeps_the_renders_of_the_videos_it_leaves_out(tmp_path: Path, choice):
+    videos = [{"name": "a.MP4", "source": "a", "marks": [MARK]}, {"name": "b.MP4", "source": "b", "marks": [MARK]}]
+    job = make_job(tmp_path, videos=videos)
+    job.start()
+    wait_until_finished(job)
+    rendered = tmp_path / "out" / "rendered"
+    before = {item.name for item in rendered.glob("*.mp4")}
+    # The choice leaves video b with nothing to draw and changes what video a shows.
+    full = job._collect
+    narrowed = [{**videos[0], "marks": [{**MARK, "label": "ID001 ACAU only"}]}]
+    job._collect = lambda keys, codes=None, review=True: narrowed
+    job.start(None, "1species", **choice)
+    assert wait_until_finished(job)["state"] == "done"
+    after = {item.name for item in rendered.glob("*.mp4")}
+    # Every full render stays, beside the new render of video a.
+    assert before < after
+    assert sorted(name.split(".")[0] for name in after) == ["a_tracked", "a_tracked", "b_tracked"]
+    # The next full export reuses the full renders and drops the narrowed one.
+    job._collect = full
+    job.start()
+    assert wait_until_finished(job)["state"] == "done"
+    assert {item.name for item in rendered.glob("*.mp4")} == before
+
+
+def test_a_whole_export_drops_the_render_of_a_video_with_nothing_left_to_draw(tmp_path: Path):
+    videos = [{"name": "a.MP4", "source": "a", "marks": [MARK]}, {"name": "b.MP4", "source": "b", "marks": [MARK]}]
+    job = make_job(tmp_path, videos=videos)
+    job.start()
+    wait_until_finished(job)
+    videos.pop()
+    job.start()
+    wait_until_finished(job)
+    assert [item.name.split(".")[0] for item in (tmp_path / "out" / "rendered").glob("*.mp4")] == ["a_tracked"]
 
 
 def test_a_new_job_offers_the_zip_from_an_earlier_run(tmp_path: Path):

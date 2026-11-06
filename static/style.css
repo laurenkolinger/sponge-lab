@@ -1103,26 +1103,434 @@ body[data-mode="marking"] .mark-summary {
 
 /* ------------------------------------------------------------ right panel */
 
-.log-section {
-  position: relative;
+/* The right panel holds three tabs; one view fills the panel at a time. */
+.log-tabs {
   display: flex;
+  gap: 2px;
+  padding: 8px 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.log-tab {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-label);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.log-tab:hover {
+  color: var(--text);
+}
+
+.log-tab[aria-selected="true"] {
+  margin-bottom: -1px;
+  border-color: var(--line);
+  background: var(--bg-1);
+  color: var(--text);
+  box-shadow: inset 0 2px 0 var(--text-2);
+}
+
+.log-tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.log-tab-count {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+#tab-review[data-pending="true"] .log-tab-count {
+  color: var(--amber);
+  font-weight: 700;
+}
+
+.log-view {
+  display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
 }
 
-.log-sightings {
-  flex: 1 1 52%;
+.log-note {
+  margin: 0;
+  padding: 2px 12px 8px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.4;
 }
 
-.log-later {
-  flex: var(--review-flex, 0 1 auto);
-  max-height: var(--review-max, 32%);
-  border-top: 1px solid var(--line);
+#log-review .log-note {
+  padding-top: 10px;
 }
 
-.log-tally {
-  flex: var(--tally-flex, 1 1 48%);
-  border-top: 1px solid var(--line);
+/* ------------------------------------------------------------ diversity */
+
+.diversity-bar {
+  display: grid;
+  gap: 6px;
+  padding: 10px 8px 8px;
+}
+
+.scope-chips {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-0);
+}
+
+.scope-chip {
+  flex: 1 1 0;
+  min-height: 24px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.scope-chip:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.scope-chip[aria-pressed="true"] {
+  background: var(--bg-3);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.scope-chip:disabled {
+  color: #5c5c5c;
+  cursor: default;
+}
+
+.scope-chip:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.diversity-site select {
+  min-height: 28px;
+  font-size: 13px;
+}
+
+.diversity-title {
+  margin: 2px 6px 8px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0 2px;
+}
+
+.stat-tile {
+  display: grid;
+  gap: 1px;
+  padding: 6px 5px 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+
+.stat-value {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  color: var(--text-3);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.diversity-indices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin: 7px 4px 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.diversity-indices b {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.diversity-section {
+  margin-top: 14px;
+  padding: 0 2px;
+}
+
+.section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 0 4px 6px;
+  color: var(--text-2);
+  font-family: var(--font-label);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* A bar row: its label, a thin bar from a shared baseline, and its value in text ink. */
+.bars {
+  display: grid;
+  gap: 3px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(64px, 46%) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 20px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 12.5px;
+}
+
+.bar-row:hover {
+  background: var(--bg-2);
+}
+
+.bar-row[data-current="true"] .bar-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.bar-label {
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track {
+  height: 8px;
+  border-radius: 0 4px 4px 0;
+  background: var(--bg-3);
+}
+
+.bar-fill {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background: var(--text-2);
+}
+
+.bar-fill[data-tier="original"] {
+  background: var(--green);
+}
+
+.bar-fill[data-tier="added"] {
+  background: var(--mark);
+}
+
+.bar-fill[data-empty="true"] {
+  min-width: 0;
+}
+
+.bar-value {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar-gap {
+  height: 6px;
+}
+
+.bar-heading {
+  margin: 6px 4px 1px;
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+.bar-heading:first-child {
+  margin-top: 0;
+}
+
+.taxonomy {
+  margin: 8px 4px 0;
+  font-size: 12.5px;
+}
+
+.taxonomy summary {
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.taxonomy summary:hover {
+  color: var(--text);
+}
+
+.tree-order {
+  margin-top: 8px;
+}
+
+.tree-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tree-family {
+  margin: 3px 0 0 10px;
+}
+
+.tree-family > .tree-head {
+  color: var(--text-2);
+  font-weight: 400;
+  font-style: italic;
+}
+
+.tree-counts {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.tree-species {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-left: 12px;
+  color: #6f6f6f;
+  font-style: italic;
+}
+
+.tree-species[data-seen="true"] {
+  color: var(--text);
+}
+
+.tree-species .tree-counts {
+  font-style: normal;
+}
+
+.curve svg {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+
+.curve-axis {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+.curve-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.curve-tick {
+  fill: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.curve-line {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.curve-dot {
+  fill: var(--text);
+  stroke: var(--bg-1);
+  stroke-width: 2;
+}
+
+.curve-hit {
+  fill: transparent;
+  cursor: default;
+}
+
+.curve-hit:hover + .curve-dot,
+.curve-dot[data-last="true"] {
+  r: 4.5;
+}
+
+.curve-note {
+  margin: 4px 4px 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+#diversity-species-section .tally th:nth-child(2),
+#diversity-species-section .tally th:nth-child(3) {
+  width: 56px;
+}
+
+/* While marks are hidden, a chip on the picture says so. */
+.marks-hidden {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  margin: 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: var(--text);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+body[data-marks="hidden"] .wheel-hub-label {
+  visibility: hidden;
 }
 
 .sighting {
@@ -1462,7 +1870,46 @@ body[data-mode="marking"] .mark-summary {
 }
 
 .export-picker {
-  width: min(360px, calc(100vw - 24px));
+  width: min(380px, calc(100vw - 24px));
+}
+
+.export-heading {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font-family: var(--font-label);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.export-heading:first-of-type {
+  margin-top: 4px;
+  padding-top: 0;
+  border-top: none;
+}
+
+.export-code {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.export-row[data-tier="original"] .export-code {
+  color: var(--green);
+}
+
+.export-row[data-tier="added"] .export-code {
+  color: var(--mark);
+}
+
+.export-name {
+  overflow: hidden;
+  color: var(--text-2);
+  font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .export-row {
@@ -1486,9 +1933,13 @@ body[data-mode="marking"] .mark-summary {
   font-variant-numeric: tabular-nums;
 }
 
+/* The Export button stays in view while the long species list scrolls under it. */
 .export-go {
+  position: sticky;
+  bottom: -14px;
   width: 100%;
   margin-top: 12px;
+  box-shadow: 0 -10px 12px 2px #1b1b1b, 0 14px 0 0 #1b1b1b;
 }
 
 .coverage {

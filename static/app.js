@@ -9,13 +9,34 @@
  * video, and a saved mark rides along its track on every frame the video shows. A click
  * on a drawn mark, paused or playing, opens the same wheel to change that row's species.
  *
- * Every calculation lives in geometry.js, wheel.js, and track_math.js, which have their
- * own node tests; wheel_view.js draws the wheel. This file wires those pieces to the DOM,
+ * Every calculation lives in geometry.js, wheel.js, track_math.js, export_picker.js, and
+ * diversity_view.js, which have their own node tests; wheel_view.js draws the wheel. The
+ * diversity numbers themselves come from the server (screener/diversity.py). This file wires those pieces to the DOM,
  * the video element, and the HTTP contract of screener/server.py. Server text reaches the
  * DOM through textContent only.
  */
 
-import { exportLabel, exportRequest, groupBySite, groupState, setGroup, videoCounts } from './export_picker.js';
+import {
+  accumulationGeometry,
+  barRows,
+  coverageRows,
+  formatDate,
+  formatNumber,
+  pickScope,
+  plural,
+  taxonomyTree,
+} from './diversity_view.js';
+import {
+  exportLabel,
+  exportRequest,
+  groupByPhase,
+  groupBySite,
+  groupState,
+  phaseOfSpecies,
+  setGroup,
+  speciesCounts,
+  videoCounts,
+} from './export_picker.js';
 import {
   CROP_SIZE,
   PHASE_LEGEND,
@@ -95,6 +116,16 @@ const VIDEO_EXPORT_POLL_MS = 3000;
 
 /** Where this browser keeps the videos left out of the export. */
 const EXPORT_UNCHECKED_STORAGE = 'export-unchecked';
+/** The species and the Review row the export left out last time, kept apart from the videos. */
+const EXPORT_SPECIES_STORAGE = 'export-unchecked-species';
+const EXPORT_REVIEW_STORAGE = 'export-review';
+/** The tabs of the right panel, in order. */
+const LOG_TABS = Object.freeze(['video', 'review', 'diversity']);
+/** The size of the accumulation chart: its height, and the margins around the plot, in pixels. */
+const CURVE_HEIGHT_PX = 150;
+const CURVE_MARGIN = Object.freeze({ left: 28, right: 10, top: 8, bottom: 22 });
+/** The fewest videos that make an accumulation curve worth drawing. */
+const CURVE_MIN_VIDEOS = 2;
 /** The compare view: the column's share of the window before any drag, the photo's height per width, and the caption. */
 const COMPARE_COLUMN_SHARE = 0.32;
 const COMPARE_PHOTO_RATIO = 0.72;
@@ -153,7 +184,7 @@ const FLASH_RING = { width: 2, radius: 9 };
 /** File extensions Chrome plays directly, for a video opened from the To label list. */
 const PLAYABLE_EXTENSIONS = Object.freeze(['mp4', 'm4v', 'mov']);
 /** Elements a mousedown may reach while the wheel is open without cancelling the mark. */
-const MARKING_ZONES = '#wheel, #overlay, #pins, .combo, #note, #cancel, #fullscreen, #help, #guide, #guide-large, #toasts';
+const MARKING_ZONES = '#wheel, #overlay, #pins, .combo, #note, #cancel, #fullscreen, #marks, #help, #guide, #guide-large, #toasts';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const STORAGE = {
   position: 'screener.position.',
@@ -164,6 +195,8 @@ const STORAGE = {
   panes: 'screener.panes',
   compare: 'screener.compare',
   speed: 'screener.speed.v2',
+  logTab: 'screener.logTab',
+  diversityScope: 'screener.diversityScope',
 };
 const IDLE_TEXT = 'Pick a video from the list on the left. Then click a sponge and pick its species in the wheel.';
 
@@ -217,6 +250,17 @@ const state = {
   queue: {},
   status: { kind: 'idle', text: IDLE_TEXT },
   lastToast: null,
+  /** The tab of the right panel on screen: video, review, or diversity. */
+  logTab: 'video',
+  /** The answer of GET /api/diversity, or null before it loads. */
+  diversity: null,
+  diversityError: null,
+  /** What the Diversity tab covers: all, site, or video, and the site chosen for the site scope. */
+  diversityScope: 'all',
+  diversitySite: '',
+  /** True while the marks on the picture are hidden by the button; marksPeek while Option is held. */
+  marksHidden: false,
+  marksPeek: false,
 };
 
 /** Timers, the live drag, and other values that are not plain page data. */
@@ -230,6 +274,14 @@ const runtime = {
   exportTitle: '',
   exportVideos: [],
   exportUnchecked: new Set(),
+  exportSpecies: [],
+  exportUncheckedSpecies: new Set(),
+  exportReview: true,
+  diversityToken: 0,
+  /** True when the diversity numbers changed since the tab last loaded them. */
+  diversityStale: true,
+  /** True from opening a video until the site menu has moved to that video's site. */
+  diversitySiteFollows: false,
   guideClosedForRoom: false,
   loadToken: 0,
   queryEditedAt: -Infinity,
@@ -374,6 +426,34 @@ const dom = {
   tallyEmpty: byId('tally-empty'),
   tallyTotal: byId('tally-total'),
   toasts: byId('toasts'),
+  logTabs: [byId('tab-video'), byId('tab-review'), byId('tab-diversity')],
+  logViews: { video: byId('log-video'), review: byId('log-review'), diversity: byId('log-diversity') },
+  tabVideoCount: byId('tab-video-count'),
+  tabReview: byId('tab-review'),
+  videoSummary: byId('video-summary'),
+  diversityScope: byId('diversity-scope'),
+  diversitySite: byId('diversity-site'),
+  diversityScroll: byId('diversity-scroll'),
+  diversityTitle: byId('diversity-title'),
+  diversityEmpty: byId('diversity-empty'),
+  diversityBody: byId('diversity-body'),
+  diversityTiles: byId('diversity-tiles'),
+  diversityIndices: byId('diversity-indices'),
+  diversityCoverage: byId('diversity-coverage'),
+  diversityTree: byId('diversity-tree'),
+  diversitySitesSection: byId('diversity-sites-section'),
+  diversitySites: byId('diversity-sites'),
+  diversityVideosSection: byId('diversity-videos-section'),
+  diversityVideos: byId('diversity-videos'),
+  diversityCurveSection: byId('diversity-curve-section'),
+  diversityCurve: byId('diversity-curve'),
+  diversitySpeciesSection: byId('diversity-species-section'),
+  diversitySpecies: byId('diversity-species'),
+  diversityTallySection: byId('diversity-tally-section'),
+  marks: byId('marks'),
+  marksIcon: byId('marks-icon'),
+  marksHidden: byId('marks-hidden'),
+  exportSpecies: byId('export-species'),
 };
 
 /**
@@ -1125,6 +1205,7 @@ async function addTaxon(typed) {
     applySettings(answer);
     guide.data = null;
     loadGuide();
+    diversityChanged();
     toast(`Added ${answer.code} ${speciesByCode(answer.code).name}`);
     return answer.code;
   } catch (error) {
@@ -1290,6 +1371,7 @@ async function openVideo(entry, jump = null) {
   const token = runtime.loadToken;
   state.key = entry.key;
   state.name = entry.name;
+  runtime.diversitySiteFollows = true;
   state.rows = [];
   state.tracks = {};
   state.trackPending = [];
@@ -1779,6 +1861,46 @@ function setGrid(on) {
   drawOverlay();
 }
 
+/**
+ * Say whether the marks on the picture are hidden now.
+ * @returns {boolean} True while the eye button hides them or Option is held.
+ */
+function marksAreHidden() {
+  return state.marksHidden || state.marksPeek;
+}
+
+/** Show the hidden or shown marks: the eye button, the chip on the picture, the wheel hub, and the overlay. */
+function applyMarksHidden() {
+  const hidden = marksAreHidden();
+  document.body.dataset.marks = hidden ? 'hidden' : 'shown';
+  dom.marks.setAttribute('aria-pressed', String(state.marksHidden));
+  dom.marksIcon.setAttribute('href', hidden ? '#i-eye-off' : '#i-eye');
+  dom.marksHidden.hidden = !hidden;
+  dom.marksHidden.textContent = state.marksHidden ? 'Marks hidden' : 'Marks hidden while you hold Option';
+  drawOverlay();
+}
+
+/**
+ * Hide or show the marks until the eye button is clicked again.
+ * @param {boolean} hidden True hides them.
+ */
+function setMarksHidden(hidden) {
+  state.marksHidden = hidden;
+  applyMarksHidden();
+}
+
+/**
+ * Hide the marks while Option is held, and bring them back when it is let go.
+ * @param {boolean} held True while Option is down.
+ */
+function setMarksPeek(held) {
+  if (state.marksPeek === held) {
+    return;
+  }
+  state.marksPeek = held;
+  applyMarksHidden();
+}
+
 /** Draw the play button, the clock, and the scrub bar from the video element. */
 function renderTransport() {
   const ready = isVideoReady();
@@ -2109,7 +2231,9 @@ function drawOverlay() {
     return;
   }
 
-  if (state.pending) {
+  // Hidden marks leave the picture bare and take no clicks, so a click there starts a new mark.
+  const hidden = marksAreHidden();
+  if (state.pending && !hidden) {
     const quadrant = quadrantRect(state.pending.quadrant, rect);
     ctx.fillStyle = QUADRANT_FILL;
     ctx.fillRect(quadrant.x, quadrant.y, quadrant.w, quadrant.h);
@@ -2119,7 +2243,8 @@ function drawOverlay() {
   }
   // A tracked sighting rides along its track; one without a track covering this time
   // shows where it was clicked, near its own time.
-  for (const saved of marksAt(state.rows, state.tracks, time, SAVED_MARK_WINDOW_SECONDS)) {
+  const shown = hidden ? [] : marksAt(state.rows, state.tracks, time, SAVED_MARK_WINDOW_SECONDS);
+  for (const saved of shown) {
     let shape;
     let tag;
     if (saved.status === 'unlabeled') {
@@ -2135,7 +2260,9 @@ function drawOverlay() {
     const areas = shape.boxPx ? [tag, shape.boxPx] : [tag];
     runtime.drawn.marks.push({ id: saved.id, x: shape.center.x, y: shape.center.y, point: saved.point, tracked: saved.tracked, areas });
   }
-  drawFlashes(ctx, rect);
+  if (!hidden) {
+    drawFlashes(ctx, rect);
+  }
 
   const drag = runtime.drag;
   if (drag && isDrag(drag.startPx.x, drag.startPx.y, drag.nowPx.x, drag.nowPx.y)) {
@@ -2146,7 +2273,7 @@ function drawOverlay() {
     }
     return;
   }
-  if (state.pending) {
+  if (state.pending && !hidden) {
     // No tag: the wheel sits over the mark and names the species.
     drawMark(ctx, rect, state.pending, { color: MARK_COLOR, width: 2.5, radius: 11 });
   }
@@ -3069,6 +3196,425 @@ function applyReopened(answer, key) {
   renderBrowser();
 }
 
+// ---------------------------------------------------------------- right panel
+
+/**
+ * Show one tab of the right panel and remember it in this browser.
+ * @param {string} tab "video", "review", or "diversity"; anything else shows Video.
+ * @param {boolean} [focus] True moves the focus to the tab, as the arrow keys do.
+ */
+function setLogTab(tab, focus = false) {
+  const name = LOG_TABS.includes(tab) ? tab : 'video';
+  state.logTab = name;
+  for (const button of dom.logTabs) {
+    const on = button.dataset.tab === name;
+    button.setAttribute('aria-selected', String(on));
+    button.tabIndex = on ? 0 : -1;
+    if (on && focus) {
+      button.focus();
+    }
+  }
+  for (const [key, view] of Object.entries(dom.logViews)) {
+    view.hidden = key !== name;
+  }
+  storageSet(STORAGE.logTab, name);
+  if (name === 'diversity') {
+    showDiversity();
+  }
+}
+
+/**
+ * Move between the tabs with the arrow keys, Home, and End, as a tab list does.
+ * @param {KeyboardEvent} event The keydown on a tab.
+ */
+function onLogTabKey(event) {
+  const steps = { ArrowLeft: -1, ArrowRight: 1 };
+  const index = LOG_TABS.indexOf(state.logTab);
+  let next = null;
+  if (event.key in steps) {
+    next = LOG_TABS[(index + steps[event.key] + LOG_TABS.length) % LOG_TABS.length];
+  } else if (event.key === 'Home') {
+    next = LOG_TABS[0];
+  } else if (event.key === 'End') {
+    next = LOG_TABS[LOG_TABS.length - 1];
+  }
+  if (next) {
+    event.preventDefault();
+    event.stopPropagation();
+    setLogTab(next, true);
+  }
+}
+
+/**
+ * Word the line over the sightings of the open video: its species, sightings, and points to review.
+ * @param {Array<Object<string, string>>} rows The rows of the open video.
+ * @returns {string} Such as 8 species in 23 sightings, 2 to review; "" without rows.
+ */
+function videoSummaryText(rows) {
+  if (!rows.length) {
+    return '';
+  }
+  const labeled = rows.filter((row) => labelStatus(row) !== 'unlabeled');
+  const species = new Set(labeled.map((row) => row.SpeciesCode).filter((code) => code && code !== UNKNOWN_CODE));
+  const review = rows.length - labeled.length;
+  const text = `${plural(species.size, 'species', 'species')} in ${plural(labeled.length, 'sighting')}`;
+  return review ? `${text}, ${review} to review.` : `${text}.`;
+}
+
+/** Mark the diversity numbers as changed, and load them again now when their tab is on screen. */
+function diversityChanged() {
+  runtime.diversityStale = true;
+  if (state.logTab === 'diversity') {
+    refreshDiversity();
+  }
+}
+
+/** Draw the Diversity tab, loading its numbers first when they changed since the last load. */
+function showDiversity() {
+  if (runtime.diversityStale || !state.diversity) {
+    refreshDiversity();
+  } else {
+    renderDiversity();
+  }
+}
+
+/**
+ * Load the diversity numbers. Only the answer to the newest request counts.
+ * @returns {Promise<void>} Settles after the tab shows the numbers or the error.
+ */
+async function refreshDiversity() {
+  runtime.diversityToken += 1;
+  const token = runtime.diversityToken;
+  runtime.diversityStale = false;
+  let answer = null;
+  let problem = null;
+  try {
+    answer = await request('GET', '/api/diversity');
+  } catch (error) {
+    problem = `The diversity numbers did not load. ${endSentence(error.message)}`;
+  }
+  if (token !== runtime.diversityToken) {
+    return;
+  }
+  if (answer) {
+    state.diversity = answer;
+  } else {
+    runtime.diversityStale = true;
+  }
+  state.diversityError = problem;
+  renderDiversity();
+}
+
+/**
+ * Find the site of the open video in the diversity numbers, or in its own rows.
+ * @returns {string} The site, or "" with no video open or no sightings in it.
+ */
+function openVideoSite() {
+  if (!state.key) {
+    return '';
+  }
+  const video = state.diversity ? state.diversity.videos.find((item) => item.key === state.key) : null;
+  return video ? video.site : (state.rows.find((row) => row.Site) || {}).Site || '';
+}
+
+/**
+ * Choose what the Diversity tab covers, and remember it in this browser.
+ * @param {string} scope "all", "site", or "video".
+ */
+function setDiversityScope(scope) {
+  state.diversityScope = ['all', 'site', 'video'].includes(scope) ? scope : 'all';
+  if (state.diversityScope === 'site') {
+    state.diversitySite = openVideoSite() || state.diversitySite;
+  }
+  storageSet(STORAGE.diversityScope, state.diversityScope);
+  dom.diversityScroll.scrollTop = 0;
+  renderDiversity();
+}
+
+/** Fill the site menu from the numbers, keeping the chosen site when it is still there. */
+function renderDiversitySites() {
+  const sites = state.diversity ? state.diversity.sites.map((item) => item.site) : [];
+  // After a video opens, the site menu moves to its site once that site is known.
+  const own = runtime.diversitySiteFollows ? openVideoSite() : '';
+  if (own && sites.includes(own)) {
+    state.diversitySite = own;
+    runtime.diversitySiteFollows = false;
+  }
+  if (!sites.includes(state.diversitySite)) {
+    const own = openVideoSite();
+    state.diversitySite = sites.includes(own) ? own : sites[0] || '';
+  }
+  const current = [...dom.diversitySite.options].map((option) => option.value);
+  if (current.join('\n') !== sites.join('\n')) {
+    dom.diversitySite.replaceChildren(...sites.map((site) => el('option', { text: site, attrs: { value: site } })));
+  }
+  dom.diversitySite.value = state.diversitySite;
+  dom.diversitySite.closest('label').hidden = state.diversityScope !== 'site' || sites.length === 0;
+}
+
+/**
+ * Build one stat tile.
+ * @param {string} value The number.
+ * @param {string} label What it counts.
+ * @param {string} title The tooltip: what the number means.
+ * @returns {HTMLElement} The tile.
+ */
+function statTile(value, label, title) {
+  return el('div', { class: 'stat-tile', title }, [
+    el('span', { class: 'stat-value', text: value }),
+    el('span', { class: 'stat-label', text: label }),
+  ]);
+}
+
+/**
+ * Build one bar row: a label, a bar from a shared baseline, and the value in text.
+ * @param {{label: string, share: number}} row The row from barRows.
+ * @param {string} value The value as text.
+ * @param {string} title The tooltip.
+ * @param {{tier?: string, current?: boolean}} [options] A phase tier for the bar color, and
+ *   whether the row is the open video or its site.
+ * @returns {HTMLElement} The row.
+ */
+function barRow(row, value, title, options = {}) {
+  const fill = el('span', {
+    class: 'bar-fill',
+    data: { tier: options.tier || '', empty: String(row.share === 0) },
+  });
+  fill.style.width = `${(row.share * 100).toFixed(1)}%`;
+  return el('div', { class: 'bar-row', title, data: { current: String(Boolean(options.current)) } }, [
+    el('span', { class: 'bar-label', text: row.label }),
+    el('span', { class: 'bar-track', attrs: { 'aria-hidden': 'true' } }, [fill]),
+    el('span', { class: 'bar-value', text: value }),
+  ]);
+}
+
+/**
+ * Draw the stat tiles and the index line of a summary.
+ * @param {object} summary The summary of the scope on screen.
+ */
+function renderDiversityTiles(summary) {
+  const unknown = summary.unknown ? ` ${plural(summary.unknown, 'sighting')} of Unknown sponge are left out.` : '';
+  const third = state.diversityScope === 'video'
+    ? statTile(String(summary.review), 'to review', 'Points in this video saved without a species. They are not in any count here.')
+    : statTile(String(summary.videos), summary.videos === 1 ? 'video' : 'videos', 'Videos with at least one sighting or point to review, or marked done.');
+  dom.diversityTiles.replaceChildren(
+    statTile(String(summary.species), 'species', `Species richness: the distinct species with labeled sightings.${unknown}`),
+    statTile(String(summary.sightings), summary.sightings === 1 ? 'sighting' : 'sightings', 'Labeled sightings, Unknown sponge included. Points to review are not counted.'),
+    third,
+    statTile(String(summary.genus), summary.genus === 1 ? 'genus' : 'genera', 'Distinct genera among the species seen.'),
+    statTile(String(summary.family), summary.family === 1 ? 'family' : 'families', 'Distinct families among the species seen, from config/taxonomy.csv (WoRMS).'),
+    statTile(String(summary.order), summary.order === 1 ? 'order' : 'orders', 'Distinct orders among the species seen, from config/taxonomy.csv (WoRMS).'),
+  );
+  const caveat = 'Screening targets some species, so this describes the sightings, not the reef.';
+  dom.diversityIndices.replaceChildren(
+    el('span', { title: `Shannon diversity H′ = −Σ p ln p over the species' shares of the sightings. ${caveat}` }, ['Shannon ', el('b', { text: formatNumber(summary.shannon, 2) })]),
+    el('span', { title: `Simpson diversity 1 − Σ p²: the chance that two sightings picked at random are different species. ${caveat}` }, ['Simpson ', el('b', { text: formatNumber(summary.simpson, 2) })]),
+    el('span', { title: `Chao1 estimated richness: the species seen plus an estimate of those missed, from the species seen once and twice. ${caveat}` }, ['Chao1 ', el('b', { text: formatNumber(summary.chao1, 1) })]),
+  );
+}
+
+/**
+ * Draw the taxonomic coverage bars and the taxonomy tree of a summary.
+ * @param {object} payload The diversity numbers.
+ * @param {object} summary The summary of the scope on screen.
+ */
+function renderDiversityCoverage(payload, summary) {
+  const rows = coverageRows(payload, summary);
+  const rankRows = rows.ranks.map((row) => barRow(
+    row,
+    `${row.seen}/${row.total}`,
+    `${row.label}: ${row.seen} of the ${row.total} in the species list have sightings here (${Math.round(row.share * 100)}%).`,
+  ));
+  const phaseRows = rows.phases.map((row) => barRow(
+    row,
+    `${row.seen}/${row.total}`,
+    `${row.label}: ${row.seen} of its ${row.total} species have sightings here.`,
+    { tier: row.tier },
+  ));
+  dom.diversityCoverage.replaceChildren(...rankRows, el('div', { class: 'bar-gap', attrs: { 'aria-hidden': 'true' } }), ...phaseRows);
+  // Unknown sponge is not a taxon, so the tree adds up to the coverage bar above it.
+  const taxa = payload.taxa.filter((taxon) => taxon.code !== UNKNOWN_CODE);
+  dom.diversityTree.replaceChildren(...taxonomyTree(taxa, summary.counts).map((order) => el('div', { class: 'tree-order' }, [
+    el('div', { class: 'tree-head' }, [el('span', { text: order.name }), el('span', { class: 'tree-counts', text: `${order.seen}/${order.total}` })]),
+    ...order.families.map((family) => el('div', { class: 'tree-family' }, [
+      el('div', { class: 'tree-head' }, [el('span', { text: family.name }), el('span', { class: 'tree-counts', text: `${family.seen}/${family.total}` })]),
+      ...family.species.map((item) => el('div', {
+        class: 'tree-species',
+        title: item.count ? `${item.name} (${item.code}): ${plural(item.count, 'sighting')} here.` : `${item.name} (${item.code}): no sightings here.`,
+        data: { seen: String(item.count > 0) },
+      }, [el('span', { text: item.name }), el('span', { class: 'tree-counts', text: item.count ? String(item.count) : '' })])),
+    ])),
+  ])));
+}
+
+/**
+ * Draw species richness by site, for all videos.
+ * @param {object} payload The diversity numbers.
+ */
+function renderDiversityBySite(payload) {
+  const own = openVideoSite();
+  const rows = barRows(payload.sites, (item) => item.site, (item) => item.species);
+  dom.diversitySites.replaceChildren(...rows.map((row) => barRow(
+    row,
+    String(row.value),
+    `${row.item.site}: ${plural(row.item.species, 'species', 'species')} in ${plural(row.item.sightings, 'sighting')} from ${plural(row.item.videos, 'video')}.`,
+    { current: row.item.site === own },
+  )));
+}
+
+/**
+ * Draw species richness by video, for all videos or one site.
+ * @param {object} payload The diversity numbers.
+ */
+function renderDiversityByVideo(payload) {
+  const site = state.diversityScope === 'site' ? state.diversitySite : null;
+  const videos = payload.videos.filter((item) => site === null || item.site === site);
+  // One scale for every row, so bars compare across sites. Rows sit under a heading for each
+  // site and survey date (the date alone within one site), so a row needs only its transect.
+  const rows = barRows(videos, (item) => item.transect || item.name, (item) => item.species);
+  const nodes = [];
+  let group = null;
+  for (const row of rows) {
+    const day = formatDate(row.item.date);
+    const key = `${row.item.site}|${row.item.date}`;
+    if (key !== group) {
+      group = key;
+      const words = site === null ? [row.item.site || 'Unknown site', day] : [day || 'No date in the file name'];
+      nodes.push(el('div', { class: 'bar-heading', text: words.filter(Boolean).join(', ') }));
+    }
+    nodes.push(barRow(
+      row,
+      String(row.value),
+      `${row.item.name}: ${plural(row.item.species, 'species', 'species')} in ${plural(row.item.sightings, 'sighting')}${row.item.review ? `, ${row.item.review} to review` : ''}.`,
+      { current: row.item.key === state.key },
+    ));
+  }
+  dom.diversityVideos.replaceChildren(...nodes);
+}
+
+/**
+ * Build an SVG element. Text goes in through textContent.
+ * @param {string} tag The SVG tag.
+ * @param {Object<string, (string|number)>} [attrs] Its attributes.
+ * @param {string} [text] Its text.
+ * @returns {SVGElement} The element.
+ */
+function svgNode(tag, attrs = {}, text = '') {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attrs)) {
+    node.setAttribute(name, String(value));
+  }
+  if (text) {
+    node.textContent = text;
+  }
+  return node;
+}
+
+/**
+ * Draw the species accumulation curve of a summary, sized to the column.
+ * @param {object} summary The summary of the scope on screen.
+ */
+function renderDiversityCurve(summary) {
+  const width = Math.max(180, Math.round(dom.diversityCurve.clientWidth || 260));
+  const geometry = accumulationGeometry(summary.accumulation, { width, height: CURVE_HEIGHT_PX, ...CURVE_MARGIN });
+  if (!geometry) {
+    dom.diversityCurve.replaceChildren();
+    return;
+  }
+  const { plot } = geometry;
+  const svg = svgNode('svg', {
+    viewBox: `0 0 ${width} ${CURVE_HEIGHT_PX}`,
+    height: CURVE_HEIGHT_PX,
+    role: 'img',
+    'aria-label': `Species accumulation: ${formatNumber(summary.accumulation.at(-1).species, 1)} species expected after ${plural(summary.videos, 'video')}.`,
+  });
+  for (const tick of geometry.yTicks) {
+    svg.append(svgNode('line', { class: tick.value === 0 ? 'curve-axis' : 'curve-grid', x1: plot.x0, x2: plot.x1, y1: tick.y, y2: tick.y }));
+    svg.append(svgNode('text', { class: 'curve-tick', x: plot.x0 - 5, y: tick.y + 3, 'text-anchor': 'end' }, String(tick.value)));
+  }
+  for (const tick of geometry.xTicks) {
+    svg.append(svgNode('text', { class: 'curve-tick', x: tick.x, y: plot.y0 + 13, 'text-anchor': 'middle' }, String(tick.value)));
+  }
+  svg.append(svgNode('text', { class: 'curve-tick', x: plot.x0 + 4, y: plot.y1 + 4 }, 'species'));
+  svg.append(svgNode('text', { class: 'curve-tick', x: plot.x1, y: plot.y0 - 5, 'text-anchor': 'end' }, 'videos'));
+  svg.append(svgNode('path', { class: 'curve-line', d: geometry.path }));
+  const last = geometry.dots.length - 1;
+  geometry.dots.forEach((dot, index) => {
+    const hit = svgNode('circle', { class: 'curve-hit', cx: dot.x, cy: dot.y, r: 9 });
+    hit.append(svgNode('title', {}, `${plural(dot.videos, 'video')}: ${formatNumber(dot.species, 1)} species expected`));
+    svg.append(hit, svgNode('circle', { class: 'curve-dot', cx: dot.x, cy: dot.y, r: index === last ? 4.5 : 2.5, 'data-last': String(index === last) }));
+  });
+  const ending = summary.accumulation.at(-1);
+  dom.diversityCurve.replaceChildren(
+    svg,
+    el('p', {
+      class: 'curve-note',
+      text: `${plural(summary.species, 'species', 'species')} seen in ${plural(ending.videos, 'video')}. A curve still rising at the right means more videos would add species.`,
+    }),
+  );
+}
+
+/**
+ * Draw the species of a site or a video, most seen first.
+ * @param {object} summary The summary of the scope on screen.
+ */
+function renderDiversitySpecies(summary) {
+  const codes = Object.keys(summary.counts).sort((a, b) => summary.counts[b] - summary.counts[a] || a.localeCompare(b));
+  dom.diversitySpecies.replaceChildren(...codes.map((code) => {
+    const known = speciesByCode(code);
+    const name = known ? known.name : code;
+    return el('tr', {
+      title: `${name}: ${plural(summary.counts[code], 'sighting')} in ${plural(summary.video_counts[code] || 0, 'video')}.`,
+      data: { code, tier: speciesTier(known ? known.part : '') },
+    }, [
+      el('td', {}, [el('span', { class: 'tally-code', text: code })]),
+      el('td', { class: 'num', text: String(summary.counts[code]) }),
+      el('td', { class: 'num', text: String(summary.video_counts[code] || 0) }),
+    ]);
+  }));
+}
+
+/** Draw the Diversity tab for the scope chosen. */
+function renderDiversity() {
+  const payload = state.diversity;
+  for (const chip of dom.diversityScope.querySelectorAll('.scope-chip')) {
+    chip.setAttribute('aria-pressed', String(chip.dataset.scope === state.diversityScope));
+    chip.disabled = chip.dataset.scope === 'video' && !state.key;
+  }
+  renderDiversitySites();
+  const scope = state.diversityScope;
+  const picked = pickScope(payload, scope, state.diversitySite, state.key || '');
+  const summary = picked.summary;
+  dom.diversityTitle.textContent = picked.title;
+  dom.diversityTitle.hidden = !picked.title;
+  dom.diversityEmpty.textContent = state.diversityError || picked.empty;
+  dom.diversityEmpty.hidden = !dom.diversityEmpty.textContent;
+  dom.diversityBody.hidden = !summary;
+  // The tally comes from its own request, so it shows for all videos even when these numbers fail.
+  dom.diversityTallySection.hidden = scope !== 'all';
+  if (!summary) {
+    return;
+  }
+  renderDiversityTiles(summary);
+  renderDiversityCoverage(payload, summary);
+  dom.diversitySitesSection.hidden = scope !== 'all' || payload.sites.length === 0;
+  if (!dom.diversitySitesSection.hidden) {
+    renderDiversityBySite(payload);
+  }
+  dom.diversityVideosSection.hidden = scope === 'video';
+  if (!dom.diversityVideosSection.hidden) {
+    renderDiversityByVideo(payload);
+  }
+  dom.diversityCurveSection.hidden = scope === 'video' || summary.videos < CURVE_MIN_VIDEOS;
+  if (!dom.diversityCurveSection.hidden) {
+    renderDiversityCurve(summary);
+  }
+  dom.diversitySpeciesSection.hidden = scope === 'all';
+  if (!dom.diversitySpeciesSection.hidden) {
+    renderDiversitySpecies(summary);
+  }
+}
+
 // ------------------------------------------------------- sightings and tally
 
 /**
@@ -3104,6 +3650,12 @@ function markFresh(id) {
 function renderSightings() {
   const rows = sortRowsByTime(state.rows);
   dom.sightingsCount.textContent = sightingsCount(rows);
+  dom.tabVideoCount.textContent = state.key ? String(rows.filter((row) => labelStatus(row) !== 'unlabeled').length) : '';
+  dom.videoSummary.textContent = videoSummaryText(rows);
+  dom.videoSummary.hidden = !dom.videoSummary.textContent;
+  if (state.logTab === 'diversity') {
+    renderDiversity();
+  }
   dom.sightingsEmpty.hidden = rows.length > 0;
   dom.sightingsEmpty.textContent = state.key
     ? 'No sightings in this video yet.'
@@ -3341,6 +3893,8 @@ function onBeforeUnload(event) {
  * @returns {Promise<void>} Settles after the table shows the tally or the error.
  */
 async function refreshTally() {
+  // Whatever changed the tally changed the diversity numbers too.
+  diversityChanged();
   runtime.tallyToken += 1;
   const token = runtime.tallyToken;
   let answer = null;
@@ -3432,6 +3986,7 @@ async function refreshToLabel() {
 /** Draw the To label list, newest point first. */
 function renderToLabel() {
   dom.toLabelCount.textContent = String(state.toLabel.length);
+  dom.tabReview.dataset.pending = String(state.toLabel.length > 0);
   dom.toLabel.replaceChildren(...state.toLabel.slice().reverse().map(toLabelNode));
   dom.toLabelEmpty.textContent = state.toLabelError || 'Nothing to review.';
   dom.toLabelEmpty.hidden = state.toLabel.length > 0 && !state.toLabelError;
@@ -3547,15 +4102,96 @@ async function saveAnnotator() {
 }
 
 /**
- * Read which videos this browser left out last time.
- * @returns {Set<string>} Their keys, or none when the browser kept nothing.
+ * Read which videos or species this browser left out last time.
+ * @param {string} [name] The storage name: the videos' by default, or the species'.
+ * @returns {Set<string>} Their keys or codes, or none when the browser kept nothing.
  */
-function readExportUnchecked() {
+function readExportUnchecked(name = EXPORT_UNCHECKED_STORAGE) {
   try {
-    return new Set(JSON.parse(localStorage.getItem(EXPORT_UNCHECKED_STORAGE)) || []);
+    const stored = JSON.parse(localStorage.getItem(name));
+    return new Set(Array.isArray(stored) ? stored.filter((item) => typeof item === 'string') : []);
   } catch (error) {
     return new Set();
   }
+}
+
+/**
+ * Keep the species left out for the next export in this browser, and show the change.
+ * @param {Set<string>} unchecked Their codes.
+ */
+function setExportUncheckedSpecies(unchecked) {
+  runtime.exportUncheckedSpecies = unchecked;
+  storageSet(EXPORT_SPECIES_STORAGE, JSON.stringify([...unchecked]));
+  renderExportPicker();
+}
+
+/**
+ * Keep whether the drawn videos show the Review points, and show the change.
+ * @param {boolean} shown True draws them.
+ */
+function setExportReview(shown) {
+  runtime.exportReview = shown;
+  storageSet(EXPORT_REVIEW_STORAGE, shown ? '1' : '0');
+  renderExportPicker();
+}
+
+/**
+ * Draw one species row of the picker: its code in its phase color, its name, and its counts.
+ * @param {{key: string, code: string, name: string, part: string, sightings: number, videos: number}} item The species.
+ * @param {Set<string>} unchecked The codes left out.
+ * @returns {HTMLElement} The row.
+ */
+function exportSpeciesRow(item, unchecked) {
+  const known = speciesByCode(item.code);
+  const name = item.name || (known ? known.name : '');
+  const box = el('input', { attrs: { type: 'checkbox', 'aria-label': `${item.code} ${name}` } });
+  box.checked = !unchecked.has(item.key);
+  box.addEventListener('change', () => setExportUncheckedSpecies(setGroup([item], unchecked, box.checked)));
+  return el('label', {
+    class: 'export-row',
+    title: `${name} (${item.code}): ${speciesCounts(item)}. Unchecked, its sightings stay out of the tables, the images, and the videos.`,
+    data: { tier: speciesTier(phaseOfSpecies(item.part, item.code)) },
+  }, [
+    box,
+    el('span', { class: 'export-code', text: item.code }),
+    el('span', { class: 'export-name', text: name }),
+    el('span', { class: 'export-counts', text: String(item.sightings) }),
+  ]);
+}
+
+/** Draw the species half of the picker: one group per phase, then the Review points. */
+function renderExportSpecies() {
+  const species = runtime.exportSpecies;
+  const unchecked = runtime.exportUncheckedSpecies;
+  if (!species.length) {
+    dom.exportSpecies.replaceChildren(el('p', { class: 'empty', text: 'No species yet.' }));
+    return;
+  }
+  const nodes = groupByPhase(species).flatMap((group) => [
+    exportRow(
+      group.label,
+      plural(group.species.length, 'species', 'species'),
+      groupState(group.species, unchecked),
+      (checked) => setExportUncheckedSpecies(setGroup(group.species, unchecked, checked)),
+      'export-row export-site',
+    ),
+    ...group.species.map((item) => exportSpeciesRow(item, unchecked)),
+  ]);
+  const review = runtime.exportVideos
+    .filter((video) => !runtime.exportUnchecked.has(video.key))
+    .reduce((sum, video) => sum + (Number(video.review) || 0), 0);
+  if (review > 0) {
+    const row = exportRow(
+      'Review points on the videos',
+      String(review),
+      runtime.exportReview ? 'all' : 'none',
+      (checked) => setExportReview(checked),
+      'export-row export-site',
+    );
+    row.title = 'Checked, the drawn videos show the points saved without a species in amber. The tables never hold them.';
+    nodes.push(row);
+  }
+  dom.exportSpecies.replaceChildren(...nodes);
 }
 
 /**
@@ -3613,9 +4249,11 @@ function renderExportPicker() {
       )),
     ]));
   }
-  const none = videos.every((video) => unchecked.has(video.key));
-  dom.exportGo.disabled = none;
-  dom.exportGo.textContent = exportLabel(videos, unchecked);
+  renderExportSpecies();
+  const species = runtime.exportSpecies;
+  const noSpecies = species.length > 0 && species.every((item) => runtime.exportUncheckedSpecies.has(item.key));
+  dom.exportGo.disabled = videos.every((video) => unchecked.has(video.key)) || noSpecies;
+  dom.exportGo.textContent = exportLabel(videos, unchecked, species, runtime.exportUncheckedSpecies);
 }
 
 /**
@@ -3631,8 +4269,12 @@ async function toggleExportPicker(open) {
     return;
   }
   try {
-    runtime.exportVideos = (await request('GET', '/api/export/choices')).videos;
+    const choices = await request('GET', '/api/export/choices');
+    runtime.exportVideos = choices.videos;
+    runtime.exportSpecies = (Array.isArray(choices.species) ? choices.species : []).map((item) => ({ ...item, key: item.code }));
     runtime.exportUnchecked = readExportUnchecked();
+    runtime.exportUncheckedSpecies = readExportUnchecked(EXPORT_SPECIES_STORAGE);
+    runtime.exportReview = storageGet(EXPORT_REVIEW_STORAGE) !== '0';
     renderExportPicker();
   } catch (error) {
     dom.exportGo.disabled = true;
@@ -3648,7 +4290,14 @@ async function startVideoExport() {
   toggleExportPicker(false);
   dom.exportButton.disabled = true;
   try {
-    const status = await request('POST', '/api/export/videos', exportRequest(runtime.exportVideos, runtime.exportUnchecked));
+    const body = exportRequest(
+      runtime.exportVideos,
+      runtime.exportUnchecked,
+      runtime.exportSpecies,
+      runtime.exportUncheckedSpecies,
+      runtime.exportReview,
+    );
+    const status = await request('POST', '/api/export/videos', body);
     toast('Preparing the export with videos. You can keep working.', 'info');
     runtime.videoExportRun = status.run;
     followVideoExport(status);
@@ -4370,6 +5019,11 @@ function isTextField(target) {
  * @param {KeyboardEvent} event The keydown.
  */
 function onKeyDown(event) {
+  if (event.key === 'Alt') {
+    // Holding Option hides the marks in either mode; it never reaches the other keys.
+    setMarksPeek(true);
+    return;
+  }
   if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) {
     return;
   }
@@ -4639,10 +5293,15 @@ async function deleteFromWheel() {
 }
 
 /**
- * End a held arrow key's rewind or fast-forward when the key comes up.
+ * End a held arrow key's rewind or fast-forward, or bring the marks back after Option,
+ * when the key comes up.
  * @param {KeyboardEvent} event The keyup.
  */
 function onKeyUp(event) {
+  if (event.key === 'Alt') {
+    setMarksPeek(false);
+    return;
+  }
   if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && scrubber.active()) {
     scrubber.stop();
     event.preventDefault();
@@ -4745,7 +5404,10 @@ function onMouseDownOutside(event) {
 function wireEvents() {
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('keyup', onKeyUp);
-  window.addEventListener('blur', () => scrubber.stop());
+  window.addEventListener('blur', () => {
+    scrubber.stop();
+    setMarksPeek(false);
+  });
   document.addEventListener('mousedown', onMouseDownOutside, true);
   document.addEventListener('fullscreenchange', onFullscreenChange);
   window.addEventListener('resize', relayoutWheel);
@@ -4838,6 +5500,32 @@ function wireEvents() {
   dom.slower.addEventListener('click', () => setSpeed(stepSpeed(state.speed, -1)));
   dom.faster.addEventListener('click', () => setSpeed(stepSpeed(state.speed, 1)));
   dom.grid.addEventListener('click', () => setGrid(!state.grid));
+  dom.marks.addEventListener('click', () => setMarksHidden(!state.marksHidden));
+  for (const tab of dom.logTabs) {
+    tab.addEventListener('click', () => setLogTab(tab.dataset.tab));
+    tab.addEventListener('keydown', onLogTabKey);
+  }
+  dom.diversityScope.addEventListener('click', (event) => {
+    const chip = event.target.closest('.scope-chip');
+    if (chip && !chip.disabled) {
+      setDiversityScope(chip.dataset.scope);
+    }
+  });
+  dom.diversitySite.addEventListener('change', () => {
+    // A site picked by hand wins over the open video's site.
+    runtime.diversitySiteFollows = false;
+    state.diversitySite = dom.diversitySite.value;
+    renderDiversity();
+  });
+  // The curve follows the column's width when a pane is resized.
+  let curveWidth = 0;
+  new ResizeObserver(() => {
+    const width = Math.round(dom.diversityCurve.clientWidth);
+    if (width !== curveWidth && state.logTab === 'diversity' && !dom.diversityCurveSection.hidden) {
+      curveWidth = width;
+      renderDiversity();
+    }
+  }).observe(dom.diversityScroll);
   dom.next.addEventListener('click', openNextVideo);
   dom.fullscreen.addEventListener('click', toggleFullscreen);
   dom.deckToggle.addEventListener('click', () => setDeck(!state.deckShown));
@@ -4919,6 +5607,8 @@ function restorePreferences() {
   setSpeed(SPEEDS.includes(speed) ? speed : DEFAULT_SPEED);
   setDeck(storageGet(STORAGE.deck) === '1');
   setGuideDock(storageGet(STORAGE.guideDock) !== '0');
+  state.diversityScope = ['all', 'site', 'video'].includes(storageGet(STORAGE.diversityScope)) ? storageGet(STORAGE.diversityScope) : 'all';
+  setLogTab(storageGet(STORAGE.logTab) || 'video');
   panes = createPanes({
     load: () => storageGet(STORAGE.panes),
     save: (text) => storageSet(STORAGE.panes, text),

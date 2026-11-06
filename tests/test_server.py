@@ -2386,7 +2386,7 @@ def test_export_label_names_whole_sites_and_marks_a_part():
 
 
 def test_export_choice_routes_refuse_bad_keys(running: Running):
-    assert running.client.get("/api/export/choices").json() == {"videos": []}
+    assert running.client.get("/api/export/choices").json() == {"videos": [], "species": []}
     assert running.client.post("/api/export/videos", {"keys": []}).status == 400
     assert running.client.post("/api/export/videos", {"keys": "a"}).status == 400
     unknown = running.client.post("/api/export/videos", {"keys": ["../../etc/passwd"]})
@@ -2399,3 +2399,222 @@ def test_video_export_routes(running: Running):
     answer = running.client.post("/api/export/videos", {})
     assert answer.status == 400 and answer.error.startswith("videos")
     assert running.client.post("/api/export/videos", {}, mutation_header=False).status == 403
+
+
+# ----- diversity and the species choice of an export -----
+
+
+def shipped_reference() -> Dict[str, int]:
+    """Count the shipped species list at each rank, read straight from the config files."""
+    with open(CONFIG_DIR / "species.csv", encoding="utf-8", newline="") as handle:
+        names = [record["ScientificName"] for record in csv.DictReader(handle) if record["Code"] != "UNKN"]
+    with open(CONFIG_DIR / "taxonomy.csv", encoding="utf-8", newline="") as handle:
+        tree = {record["Genus"]: record for record in csv.DictReader(handle)}
+    genera = {name.split()[0] for name in names}
+    return {
+        "species": len(names),
+        "genus": len(genera),
+        "family": len({tree[genus]["Family"] for genus in genera if genus in tree}),
+        "order": len({tree[genus]["Order"] for genus in genera if genus in tree}),
+    }
+
+
+def test_diversity_route_on_an_empty_store(running: Running):
+    answer = running.client.get("/api/diversity")
+    assert answer.status == 200, answer.body
+    body = answer.json()
+    assert body["reference"] == shipped_reference()
+    assert [phase["part"] for phase in body["phases"]] == ["1", "2", "3"]
+    assert sum(phase["total"] for phase in body["phases"]) == body["reference"]["species"]
+    assert body["all"]["videos"] == 0 and body["all"]["accumulation"] == []
+    assert body["all"]["shannon"] is None
+    assert body["sites"] == [] and body["videos"] == []
+    acau = next(item for item in body["taxa"] if item["code"] == "ACAU")
+    assert acau == {
+        "code": "ACAU",
+        "name": "Aplysina cauliformis",
+        "part": "1",
+        "genus": "Aplysina",
+        "family": "Aplysinidae",
+        "order": "Verongiida",
+        "class": "Demospongiae",
+    }
+
+
+def test_diversity_route_counts_sightings_review_points_and_done_videos(running: Running):
+    save_one(running, species="ACAU")
+    save_one(running, species="ACAU", time=20.0)
+    save_one(running, key=KEY_T2, species="AFUL")
+    save_one(running, species=None, time=30.0)
+    save_one(running, key=KEY_MTS, species="UNKN")
+    assert running.client.post("/api/videos/open", {"key": KEY_PLUS}).status == 200
+    assert running.client.post("/api/videos/done", {"key": KEY_PLUS, "done": True}).status == 200
+    body = running.client.get("/api/diversity").json()
+    everything = body["all"]
+    assert (everything["videos"], everything["sites"], everything["sightings"]) == (4, 2, 4)
+    assert (everything["review"], everything["unknown"], everything["species"]) == (1, 1, 2)
+    assert everything["counts"] == {"ACAU": 2, "AFUL": 1, "UNKN": 1}
+    assert everything["phases"] == {"1": 1, "2": 1, "3": 0}
+    assert len(everything["accumulation"]) == 4 and everything["accumulation"][-1] == {"videos": 4, "species": 2.0}
+    assert [(site["site"], site["videos"], site["species"]) for site in body["sites"]] == [("Buck Island", 1, 0), ("Flat Cay", 3, 2)]
+    videos = [(video["key"], video["date"], video["transect"], video["status"]) for video in body["videos"]]
+    assert videos == [
+        (KEY_MTS, "2023-08-01", "T1", "in progress"),
+        (KEY_PLUS, "2005-07-12", "T1+T3-6", "done"),
+        (KEY_T1, "2024-10-22", "T1", "in progress"),
+        (KEY_T2, "2024-10-22", "T2", "in progress"),
+    ]
+
+
+def test_diversity_counts_an_added_species_in_phase_3(running: Running):
+    assert running.client.post("/api/species", {"name": "Cinachyrella"}).status == 200
+    save_one(running, species="CINA")
+    body = running.client.get("/api/diversity").json()
+    assert body["reference"]["species"] == shipped_reference()["species"] + 1
+    cina = next(item for item in body["taxa"] if item["code"] == "CINA")
+    assert (cina["part"], cina["genus"], cina["family"]) == ("3", "Cinachyrella", "Tetillidae")
+    assert body["all"]["phases"] == {"1": 0, "2": 0, "3": 1}
+
+
+def config_copy(tmp_path: Path) -> Path:
+    """Copy the project's config folder, so a test can change taxonomy.csv."""
+    folder = tmp_path / "config-copy"
+    shutil.copytree(CONFIG_DIR, folder)
+    return folder
+
+
+def test_app_without_taxonomy_starts_and_counts_genera_only(tmp_path: Path, fake: FakeS3, static_root: Path, capsys):
+    config_dir = config_copy(tmp_path)
+    (config_dir / "taxonomy.csv").unlink()
+    app = ScreenerApp(tmp_path / "data", tmp_path / "cache", config_dir, static_root, fake.url, 0, track_python=tmp_path / "none")
+    try:
+        reference = app.diversity_payload()["reference"]
+    finally:
+        app.close()
+    assert reference["genus"] == shipped_reference()["genus"]
+    assert (reference["family"], reference["order"]) == (0, 0)
+    lines = [line for line in capsys.readouterr().err.splitlines() if "taxonomy.csv" in line]
+    assert len(lines) == 1 and "not found" in lines[0]
+
+
+def test_app_with_a_malformed_taxonomy_refuses_to_start(tmp_path: Path, fake: FakeS3, static_root: Path):
+    config_dir = config_copy(tmp_path)
+    (config_dir / "taxonomy.csv").write_text("Genus,Family\nAgelas,Agelasidae\n", encoding="utf-8")
+    with pytest.raises(ValueError) as caught:
+        ScreenerApp(tmp_path / "data", tmp_path / "cache", config_dir, static_root, fake.url, 0)
+    assert str(config_dir / "taxonomy.csv") in str(caught.value)
+
+
+def test_export_choices_list_species_by_phase_then_code(running: Running):
+    save_one(running, species="AFUL")
+    save_one(running, species="ACAU", time=20.0)
+    save_one(running, key=KEY_T2, species="ACAU")
+    save_one(running, species="UNKN", time=30.0)
+    save_one(running, species="XMUT", time=40.0)
+    save_one(running, species="ACLA", time=50.0)
+    save_one(running, species=None, time=60.0)
+    body = running.client.get("/api/export/choices").json()
+    assert body["species"] == [
+        {"code": "ACAU", "name": "Aplysina cauliformis", "part": "1", "sightings": 2, "videos": 2},
+        {"code": "AFUL", "name": "Aplysina fulva", "part": "2", "sightings": 1, "videos": 1},
+        {"code": "XMUT", "name": "Xestospongia muta", "part": "2", "sightings": 1, "videos": 1},
+        {"code": "ACLA", "name": "Agelas clathrodes", "part": "3", "sightings": 1, "videos": 1},
+        {"code": "UNKN", "name": "Unknown sponge", "part": "", "sightings": 1, "videos": 1},
+    ]
+    assert [(video["key"], video["sightings"], video["review"]) for video in body["videos"]] == [(KEY_T1, 5, 1), (KEY_T2, 1, 0)]
+
+
+@pytest.mark.parametrize(
+    "body, starts_with",
+    [
+        ({"codes": "ACAU"}, "codes:"),
+        ({"codes": []}, "codes:"),
+        ({"codes": ["ZZZZ"]}, "codes:"),
+        ({"codes": ["XMUT"]}, "codes:"),
+        ({"codes": [7]}, "codes:"),
+        ({"codes": ["ACAU"], "review": "no"}, "review:"),
+        ({"review": None}, "review:"),
+        ({"review": 0}, "review:"),
+        ({"keys": [KEY_T2], "codes": ["ACAU"]}, "codes: the chosen species have no sightings in the chosen videos"),
+        ({"keys": [KEY_MTS], "codes": ["ACAU"]}, "keys:"),
+    ],
+)
+def test_video_export_refuses_bad_codes_and_review(running: Running, body: Dict[str, Any], starts_with: str):
+    save_one(running, species="ACAU")
+    save_one(running, key=KEY_T2, species="AFUL")
+    answer = running.client.post("/api/export/videos", body)
+    assert answer.status == 400 and answer.error.startswith(starts_with), answer.error
+
+
+def test_video_export_passes_codes_review_and_a_species_label(running: Running, monkeypatch):
+    save_one(running, species="ACAU")
+    save_one(running, key=KEY_T2, species="AFUL")
+    save_one(running, key=KEY_MTS, species="XMUT")
+    calls = []
+
+    def start(keys=None, label="", codes=None, review=True):
+        """Stand in for the job, recording what the route asked for."""
+        calls.append((keys, label, codes, review))
+        return {"state": "running"}
+
+    monkeypatch.setattr(running.app.video_export, "start", start)
+    for body in (
+        {"keys": [KEY_T1, KEY_T2], "codes": ["ACAU", "AFUL", "ACAU"], "review": False},
+        {"codes": ["XMUT"]},
+        {"keys": [KEY_T1, KEY_T2]},
+        {},
+    ):
+        assert running.client.post("/api/export/videos", body).status == 200
+    assert calls == [
+        ([KEY_T1, KEY_T2], "Flat_Cay_2species", ["ACAU", "AFUL"], False),
+        (None, "1species", ["XMUT"], True),
+        ([KEY_T1, KEY_T2], "Flat_Cay", None, True),
+        (None, "", None, True),
+    ]
+
+
+def test_video_marks_follow_the_chosen_species_and_review_points(running: Running):
+    acau = save_one(running, species="ACAU")
+    aful = save_one(running, species="AFUL", time=20.0)
+    later = save_one(running, species=None, time=30.0)
+    other = save_one(running, key=KEY_T2, species="ACAU")
+
+    def labels(**choice: Any) -> Dict[str, List[str]]:
+        """Map each video's name to its mark labels under one choice."""
+        return {video["name"]: sorted(mark["label"] for mark in video["marks"]) for video in running.app._video_marks(**choice)}
+
+    t1, t2 = KEY_T1.rsplit("/", 1)[-1], KEY_T2.rsplit("/", 1)[-1]
+    assert labels(codes=["ACAU"]) == {t1: [f"{acau['ID']} ACAU", f"{later['ID']} Review"], t2: [f"{other['ID']} ACAU"]}
+    assert labels(codes=["AFUL"], review=False) == {t1: [f"{aful['ID']} AFUL"]}
+    assert labels(review=False) == {t1: [f"{acau['ID']} ACAU", f"{aful['ID']} AFUL"], t2: [f"{other['ID']} ACAU"]}
+    assert labels(keys=[KEY_T2], codes=["AFUL"]) == {}
+
+
+def test_video_export_package_holds_only_the_chosen_species(running: Running, tmp_path: Path):
+    save_one(running, species="ACAU")
+    save_one(running, key=KEY_T2, species="AFUL")
+    folder = tmp_path / "building"
+    folder.mkdir()
+    package = running.app.video_export._build_package(folder, None, codes=["AFUL"])
+    with open(package / "observations.csv", encoding="utf-8", newline="") as handle:
+        assert [record["SpeciesCode"] for record in csv.DictReader(handle)] == ["AFUL"]
+    with open(package / "species_summary.csv", encoding="utf-8", newline="") as handle:
+        species = list(csv.DictReader(handle))
+    assert [(item["Code"], item["Phase"], item["Family"]) for item in species] == [("AFUL", "Phase 2", "Aplysinidae")]
+    assert "This package holds 1 of the 2 species with sightings: AFUL." in (package / "README.md").read_text(encoding="utf-8")
+
+
+def test_export_route_package_holds_the_summary_files(make_app, tmp_path: Path):
+    export_root = tmp_path / "exports"
+    export_root.mkdir()
+    running = make_app(settings={"export_root": str(export_root)})
+    save_one(running, species="ACAU")
+    save_one(running, key=KEY_MTS, species="CDEL")
+    package = unzip_export(running, running.client.post("/api/export", {}).json())
+    with open(package / "site_summary.csv", encoding="utf-8", newline="") as handle:
+        sites = list(csv.DictReader(handle))
+    assert [(site["Site"], site["Species"], site["SpeciesCodes"]) for site in sites] == [("Buck Island", "1", "CDEL"), ("Flat Cay", "1", "ACAU")]
+    with open(package / "species_summary.csv", encoding="utf-8", newline="") as handle:
+        species = {item["Code"]: item for item in csv.DictReader(handle)}
+    assert (species["CDEL"]["Family"], species["CDEL"]["Order"], species["CDEL"]["Class"]) == ("Clionaidae", "Clionaida", "Demospongiae")
+    assert (package / "video_summary.csv").is_file()

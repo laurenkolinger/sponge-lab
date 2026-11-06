@@ -27,10 +27,21 @@ Click **Project** at the top of the page and enter the bucket URL and folder. Th
 ## Screening
 
 - **Tag:** click a sponge, then pick a species in the wheel or press its number key.
-- **Review:** press Space in the wheel to save a point without a species. The Review list holds these points until you label them.
+- **Review:** press Space in the wheel to save a point without a species. The Review tab holds these points until you label them.
+- **Hide marks:** click the eye button under the video to hide every mark and label on the picture, and click it again to bring them back. Hold Option to hide them only while you hold it. This works with the wheel open, so you can see a small sponge under its own mark before you pick its species.
 - **Species colors:** Phase 1 is green, Phase 2 is pink, and Phase 3 is gray. Phases 1 and 2 are the eight target species, from Parts 1 and 2 of the ID guide.
 - **Guide:** the guide opens beside the video in a window at least 1,100 pixels wide. Rest the pointer on a species name to see it there.
 - **Coordinates:** `observations.csv` holds `PointX` and `PointY` for each click, as fractions of the frame from the top left. `tracks.csv` holds `X` and `Y` through time.
+
+## Right panel
+
+The panel beside the video has three tabs, and the app remembers the last one you used.
+
+- **Video:** the sightings in the open video, with a line that counts its species, sightings, and points to review. Click a sighting to jump to it.
+- **Review:** the points saved without a species, in every video. The count turns amber while any wait. Click one to open it in the wheel.
+- **Diversity:** species richness and taxonomic coverage for all videos, one site, or the open video. It shows the species, sightings, genera, families, and orders; Shannon, Simpson, and Chao1; how much of the species list each rank and phase covers; species by site and by video; a species accumulation curve; and the species tally with its target.
+
+Richness counts distinct species codes and leaves out Unknown sponge. A genus you added, such as *Cinachyrella*, counts as one taxon. Families and orders come from `config/taxonomy.csv`, taken from WoRMS; `tools/fetch_taxonomy.py` rebuilds it. The accumulation curve is the species you would expect after screening that many videos, averaged over every order of the videos (Mao Tau rarefaction). Screening targets some species, so the indices describe the sightings, not the reef.
 
 ## Coverage
 
@@ -48,7 +59,7 @@ Drag the edge between any two panes to resize them, or focus the edge and use th
 
 ## Export
 
-**Export** opens a list of the sites and videos with sightings. Uncheck what you want left out, and the app remembers that in this browser. You then download one zip with the tables, frames, crops, and each chosen video, in `videos_tracked/`, with every ID and species code drawn on its tracked position in the phase colors. Review points show in amber on the videos and stay out of the tables. Rendering runs in the background for a few minutes per video while you keep working, and the browser downloads the zip when it finishes. A video whose sightings have not changed reuses its last render.
+**Export** opens a list of the sites and videos with sightings, and below it the species, grouped by phase. Uncheck what you want left out, and the app remembers that in this browser. An unchecked species stays out of the tables, images, summaries, and videos, so you can send collaborators only the target species. The last row keeps the amber Review points off the videos when unchecked. You then download one zip with the tables, frames, crops, and each chosen video, in `videos_tracked/`, with every ID and species code drawn on its tracked position in the phase colors. Review points show in amber on the videos and stay out of the tables. Each export also holds `species_summary.csv`, `site_summary.csv`, and `video_summary.csv` with the counts and richness of what it holds. Rendering runs in the background for a few minutes per video while you keep working, and the browser downloads the zip when it finishes. A video whose sightings have not changed reuses its last render.
 
 ## Add a genus or species
 

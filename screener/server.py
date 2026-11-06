@@ -28,12 +28,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 
-from screener import config
+from screener import config, diversity
 from screener.config import KEY_PREFIX, MAX_BODY_BYTES, PLAYABLE_EXTENSIONS, TALLY_TARGET, TRACK_PYTHON, TRACK_WORKER, VERSION
 from screener.convert import Converter, ConvertError, ConvertStatus
 from screener.custom_species import add_to_guide, clean_name, load_custom_species, new_code, save_custom_species
 from screener.exemplars import choose_exemplar, load_exemplars
-from screener.export import ExportError, export_package
+from screener.export import ExportError, ExportResult, export_package
 from screener.video_export import VideoExporter
 from screener.keys import extension_of, quote_key, validate_key
 from screener.names import load_site_names
@@ -73,9 +73,13 @@ NAME_CHANGES_FILE = "species_name_changes.csv"
 GUIDE_TEXT_FILE = "guide_text.json"
 RESTART_DELAY_SECONDS = 0.5
 SITES_FILE = "sites.csv"
+TAXONOMY_FILE = "taxonomy.csv"
 SETTINGS_FILE = "settings.json"
 # The ID guide parts that hold the target species.
 TARGET_PARTS = ("1", "2")
+# The order of the species in the export picker: by phase, then by code.
+PHASE_ORDER = (*diversity.PHASES, "")
+SPECIES_LABEL_SUFFIX = "species"
 CATALOG_FILE = "catalog.json"
 INDEX_FILE = "index.html"
 
@@ -272,6 +276,28 @@ def _count_csv_rows(path: Path) -> int:
         return sum(1 for cells in csv.reader(handle) if cells) - 1
 
 
+def _load_taxonomy(config_dir: Path) -> Dict[str, diversity.Taxon]:
+    """Load taxonomy.csv, or start with no taxonomy when the file is missing.
+
+    Args:
+        config_dir: The config folder.
+
+    Returns:
+        ``{genus: Taxon}``, or ``{}`` after one line on stderr when the file is
+        missing; the Diversity panel then counts genera and no higher rank.
+
+    Raises:
+        ValueError: When the file breaks the load_taxonomy rules. The message
+            names the file and the line.
+    """
+    path = config_dir / TAXONOMY_FILE
+    try:
+        return diversity.load_taxonomy(path)
+    except FileNotFoundError:
+        sys.stderr.write(f"{path}: not found, so families and orders are not counted\n")
+        return {}
+
+
 def _checked_obs_id(obs_id: str) -> str:
     """Check the sighting ID from a route.
 
@@ -322,7 +348,7 @@ class ScreenerApp:
         Args:
             data_dir: The data folder. It is created when missing.
             cache_dir: The cache folder. It is created when missing.
-            config_dir: The folder with species.csv and sites.csv.
+            config_dir: The folder with species.csv, sites.csv, and taxonomy.csv.
             static_dir: The existing folder with index.html and its files.
             bucket_url: The bucket's base URL, http or https.
             port: The server port, 0 to 65535. 0 means make_server chooses.
@@ -333,7 +359,8 @@ class ScreenerApp:
 
         Raises:
             ValueError: Starting with the argument name when an argument has
-                the wrong type or value, or a config file breaks its rules.
+                the wrong type or value, or a config file breaks its rules. A
+                missing taxonomy.csv only costs the higher ranks.
             FileNotFoundError: When species.csv or sites.csv is missing.
             StoreError, RelayError, ConvertError: When a folder cannot be
                 created.
@@ -358,8 +385,9 @@ class ScreenerApp:
         self._name_changes = load_name_changes(Path(config_dir) / NAME_CHANGES_FILE)
         self._added_species = load_custom_species(self.data_dir, [item.code for item in self._species])
         self._species.extend(self._added_species)
-        site_names = load_site_names(Path(config_dir) / SITES_FILE)
-        self.store = ObservationStore(self.data_dir, self._species, site_names)
+        self._site_names = load_site_names(Path(config_dir) / SITES_FILE)
+        self._taxonomy = _load_taxonomy(Path(config_dir))
+        self.store = ObservationStore(self.data_dir, self._species, self._site_names)
         self.watch = WatchStore(self.data_dir / WATCHED_FILE)
         self._export_dir = self.cache_dir / EXPORT_FOLDER
         self._export_lock = threading.Lock()
@@ -381,7 +409,7 @@ class ScreenerApp:
             track_python,
             ANNOTATE_WORKER,
             self._video_marks,
-            lambda folder, keys: export_package(self.store, folder, date.today(), keys).path,
+            lambda folder, keys, codes: self._export_package(folder, keys, codes).path,
             _zip_package,
         )
         self.tracker = Tracker(track_python, track_worker, source_for=self._track_source, save_track=self.store.tracks.save)
@@ -890,6 +918,20 @@ class ScreenerApp:
             "videos": videos,
         }
 
+    def diversity_payload(self) -> Dict[str, Any]:
+        """Lay out species richness, taxonomic coverage, and the diversity indices for the Diversity panel.
+
+        Returns:
+            The screener.diversity.diversity_payload answer for every sighting,
+            Review point, and screened video, with the custom species in the list.
+
+        Raises:
+            StoreError: When a data file cannot be parsed.
+        """
+        return diversity.diversity_payload(
+            self.store.rows(), self.store.screened(), list(self._species), self._taxonomy, self._site_names
+        )
+
     # ----- conversion and prefetch -----
 
     def start_conversion(self, key: Any) -> Dict[str, Any]:
@@ -950,7 +992,7 @@ class ScreenerApp:
             try:
                 shutil.rmtree(building, ignore_errors=True)
                 building.mkdir(parents=True)
-                result = export_package(self.store, building, date.today())
+                result = self._export_package(building)
                 observations = _count_csv_rows(result.path / self.store.observations_path.name)
                 built = _zip_package(result.path)
                 archive = self._export_dir / built.name
@@ -969,45 +1011,130 @@ class ScreenerApp:
             "unlabeled_left_out": result.unlabeled_left_out,
         }
 
-    def export_choices(self) -> Dict[str, Any]:
-        """List the videos an export can hold: those with sightings, by site and transect.
+    def _export_package(
+        self, folder: Path, keys: Optional[List[str]] = None, codes: Optional[List[str]] = None
+    ) -> ExportResult:
+        """Write an export package with the species list, the taxonomy, and the site names of the app.
+
+        Args:
+            folder: The existing folder that receives the package.
+            keys: The videos to export, by S3 key, or None for every video.
+            codes: The species to export, by code, or None for every species.
 
         Returns:
-            ``{"videos": [{"key", "name", "site", "transect", "sightings", "review"}]}``,
-            where ``sightings`` counts the labeled rows and ``review`` the Review points.
+            The export_package result.
+
+        Raises:
+            ExportError: When the package cannot be written in full, or the
+                chosen videos and species leave no sighting.
+        """
+        return export_package(
+            self.store,
+            folder,
+            date.today(),
+            keys,
+            codes=codes,
+            species=list(self._species),
+            taxonomy=self._taxonomy,
+            site_names=self._site_names,
+        )
+
+    def export_choices(self) -> Dict[str, Any]:
+        """List the videos and the species an export can hold: those with sightings.
+
+        Returns:
+            ``{"videos": [{"key", "name", "site", "transect", "sightings", "review"}],
+            "species": [{"code", "name", "part", "sightings", "videos"}]}``. A video's
+            ``sightings`` counts its labeled rows and ``review`` its Review points,
+            sorted by site, transect, and name. The species are those with labeled
+            rows, UNKN included; ``part`` is the phase ("1", "2", or "3", with the
+            added species in "3", and "" for UNKN), and they are sorted by phase,
+            then code.
         """
         videos: Dict[str, Dict[str, Any]] = {}
+        species: Dict[str, Dict[str, Any]] = {}
+        listed = {item.code: item for item in self._species}
         for row in self.store.rows():
             video = videos.setdefault(
                 row["S3Key"],
                 {"key": row["S3Key"], "name": row["FileName"], "site": row["Site"], "transect": row["Transect"], "sightings": 0, "review": 0},
             )
-            video["sightings" if row["SpeciesCode"] else "review"] += 1
-        return {"videos": sorted(videos.values(), key=lambda item: (item["site"], item["transect"], item["name"]))}
+            code = row["SpeciesCode"]
+            video["sightings" if code else "review"] += 1
+            if not code:
+                continue
+            known = listed.get(code)
+            entry = species.setdefault(
+                code,
+                {
+                    "code": code,
+                    "name": known.name if known else row["Sponge Type"],
+                    "part": diversity.phase_of(known) if known else "",
+                    "sightings": 0,
+                    "keys": set(),
+                },
+            )
+            entry["sightings"] += 1
+            entry["keys"].add(row["S3Key"])
+        return {
+            "videos": sorted(videos.values(), key=lambda item: (item["site"], item["transect"], item["name"])),
+            "species": [
+                {
+                    "code": item["code"],
+                    "name": item["name"],
+                    "part": item["part"],
+                    "sightings": item["sightings"],
+                    "videos": len(item["keys"]),
+                }
+                for item in sorted(species.values(), key=lambda item: (PHASE_ORDER.index(item["part"]), item["code"]))
+            ],
+        }
 
-    def start_video_export(self, keys: Any) -> Dict[str, Any]:
-        """Start the export of the chosen videos.
+    def start_video_export(self, keys: Any, codes: Any = None, review: Any = True) -> Dict[str, Any]:
+        """Start the export of the chosen videos and species.
 
         Args:
             keys: The S3 keys from the request, or None for every video.
+            codes: The species codes from the request, or None for every species.
+            review: Whether the Review points are drawn on the videos.
 
         Returns:
-            The job's state.
+            The job's state. With codes, the zip's name ends in the number of
+            species, such as ``Buck_Island_8species``.
 
         Raises:
-            HttpError: 400 when keys is not a list of videos with sightings.
+            HttpError: 400 when keys is not a list of videos with sightings, codes
+                is not a list of species with sightings, the chosen videos hold
+                none of the chosen species, or review is not true or false.
             ValueError: Starting with ``videos:`` when the Python with OpenCV is missing.
         """
-        if keys is None:
-            return self.video_export.start()
-        offered = self.export_choices()["videos"]
-        known = {video["key"] for video in offered}
-        if not isinstance(keys, list) or not keys:
-            raise HttpError(HTTP_BAD_REQUEST, "keys: expected a list with at least one video")
-        unknown = [key for key in keys if not isinstance(key, str) or key not in known]
-        if unknown:
-            raise HttpError(HTTP_BAD_REQUEST, f"keys: no sightings for {unknown[0]!r}")
-        return self.video_export.start(keys, _export_label(offered, set(keys)))
+        choices = self.export_choices()
+        offered = choices["videos"]
+        if keys is not None:
+            known = {video["key"] for video in offered}
+            if not isinstance(keys, list) or not keys:
+                raise HttpError(HTTP_BAD_REQUEST, "keys: expected a list with at least one video")
+            unknown = [key for key in keys if not isinstance(key, str) or key not in known]
+            if unknown:
+                raise HttpError(HTTP_BAD_REQUEST, f"keys: no sightings for {unknown[0]!r}")
+        if codes is not None:
+            if not isinstance(codes, list) or not codes:
+                raise HttpError(HTTP_BAD_REQUEST, "codes: expected a list with at least one species code")
+            seen = {item["code"] for item in choices["species"]}
+            unknown = [code for code in codes if not isinstance(code, str) or code not in seen]
+            if unknown:
+                raise HttpError(HTTP_BAD_REQUEST, f"codes: no sightings of {unknown[0]!r}")
+            codes = list(dict.fromkeys(codes))
+            if keys is not None and not any(
+                row["S3Key"] in keys and row["SpeciesCode"] in codes for row in self.store.rows(status="labeled")
+            ):
+                raise HttpError(HTTP_BAD_REQUEST, "codes: the chosen species have no sightings in the chosen videos")
+        if not isinstance(review, bool):
+            raise HttpError(HTTP_BAD_REQUEST, f"review: expected true or false, got {review!r}")
+        label = "" if keys is None else _export_label(offered, set(keys))
+        if codes is not None:
+            label = "_".join(part for part in (label, f"{len(codes)}{SPECIES_LABEL_SUFFIX}") if part)
+        return self.video_export.start(keys, label, codes, review)
 
     def _finish_tracks(self, rows: List[Dict[str, str]]) -> None:
         """Queue the sightings with no track yet, and wait a limited time for them.
@@ -1024,17 +1151,27 @@ class ScreenerApp:
                 return
             time.sleep(VIDEO_EXPORT_TRACK_POLL_SECONDS)
 
-    def _video_marks(self, keys: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        """List the videos with sightings, and what to draw on each.
+    def _video_marks(
+        self, keys: Optional[List[str]] = None, codes: Optional[List[str]] = None, review: bool = True
+    ) -> List[Dict[str, Any]]:
+        """List the videos with marks to draw, and what to draw on each.
 
         Args:
             keys: The videos to list, by S3 key, or None for every video.
+            codes: The species to draw, by code, or None for every species.
+            review: Whether the Review points are drawn.
 
         Returns:
-            One ``{"name", "source", "marks"}`` per video, where each mark holds its
-            ``label`` (such as ID031 ACAU), ``tier``, ``time``, ``point``, and ``points``.
+            One ``{"name", "source", "marks"}`` per video with a mark left after the
+            choice, where each mark holds its ``label`` (such as ID031 ACAU),
+            ``tier``, ``time``, ``point``, and ``points``.
         """
-        rows = [row for row in self.store.rows() if keys is None or row["S3Key"] in keys]
+        rows = [
+            row
+            for row in self.store.rows()
+            if (keys is None or row["S3Key"] in keys)
+            and ((codes is None or row["SpeciesCode"] in codes) if row["SpeciesCode"] else review)
+        ]
         self._finish_tracks(rows)
         tracks = self.store.tracks.for_ids([row["ID"] for row in rows])
         parts = {item.code: item.part for item in self._species}
@@ -1178,6 +1315,7 @@ class _Handler(BaseHTTPRequestHandler):
         "/api/prefetch": {"GET": "_get_prefetch", "POST": "_post_prefetch"},
         "/api/export": {"POST": "_post_export"},
         "/api/export/choices": {"GET": "_get_export_choices"},
+        "/api/diversity": {"GET": "_get_diversity"},
         EXPORT_DOWNLOAD_ROUTE: {"GET": "_get_export_download"},
         VIDEO_EXPORT_ROUTE: {"GET": "_get_video_export", "POST": "_post_video_export"},
         VIDEO_DOWNLOAD_ROUTE: {"GET": "_get_video_download"},
@@ -1794,13 +1932,18 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json(HTTP_OK, self.server.app.video_export.status())
 
     def _post_video_export(self, rest: str, query: Dict[str, List[str]]) -> None:
-        """Start the export of the chosen videos, or of every video when the body names none."""
+        """Start the export of the chosen videos and species, or of everything when the body names none."""
         body = self._object_body()
-        self._send_json(HTTP_OK, self.server.app.start_video_export(body.get("keys")))
+        answer = self.server.app.start_video_export(body.get("keys"), body.get("codes"), body.get("review", True))
+        self._send_json(HTTP_OK, answer)
 
     def _get_export_choices(self, rest: str, query: Dict[str, List[str]]) -> None:
-        """List the videos an export can hold."""
+        """List the videos and the species an export can hold."""
         self._send_json(HTTP_OK, self.server.app.export_choices())
+
+    def _get_diversity(self, rest: str, query: Dict[str, List[str]]) -> None:
+        """Answer species richness, taxonomic coverage, and the diversity indices."""
+        self._send_json(HTTP_OK, self.server.app.diversity_payload())
 
     def _get_video_download(self, rest: str, query: Dict[str, List[str]]) -> None:
         """Send the finished video export as a download, resumable by the browser."""

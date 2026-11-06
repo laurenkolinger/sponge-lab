@@ -1,7 +1,8 @@
 """The background job behind Export: one zip with the package and marked videos.
 
-Rendering takes minutes per video, so it runs apart from the requests. A video whose sightings
-have not changed reuses its last render.
+Rendering takes minutes per video, so it runs apart from the requests. A video whose marks
+have not changed reuses its last render. An export can hold some of the videos, some of the
+species, and the Review points or not.
 """
 
 import hashlib
@@ -31,8 +32,8 @@ class VideoExporter:
         folder: Path,
         python: Path,
         worker: Path,
-        collect: Callable[[Optional[List[str]]], List[Dict[str, Any]]],
-        build_package: Callable[[Path, Optional[List[str]]], Path],
+        collect: Callable[..., List[Dict[str, Any]]],
+        build_package: Callable[..., Path],
         zip_package: Callable[[Path], Path],
     ) -> None:
         """Remember the tools. Nothing starts until ``start``.
@@ -41,10 +42,13 @@ class VideoExporter:
             folder: The folder for renders and the finished zip.
             python: The Python that has OpenCV.
             worker: screener/annotate_worker.py.
-            collect: Takes the chosen keys, or None for all, and returns one
-                ``{"name", "source", "marks"}`` per chosen video with sightings.
-            build_package: Writes the regular export package of the chosen keys into a
-                folder and returns it.
+            collect: Takes the chosen keys (None for all) and the keyword arguments
+                ``codes`` (the chosen species codes, None for all) and ``review``
+                (whether Review points are drawn), and returns one
+                ``{"name", "source", "marks"}`` per chosen video with marks left to draw.
+            build_package: Takes a folder, the chosen keys, and the keyword argument
+                ``codes``, writes the regular export package of those videos and
+                species into the folder, and returns the package.
             zip_package: Packs a package folder and returns the zip beside it.
         """
         self._folder = Path(folder)
@@ -75,12 +79,16 @@ class VideoExporter:
         with self._lock:
             self._status.update(fields)
 
-    def start(self, keys: Optional[List[str]] = None, label: str = "") -> Dict[str, Any]:
+    def start(
+        self, keys: Optional[List[str]] = None, label: str = "", codes: Optional[List[str]] = None, review: bool = True
+    ) -> Dict[str, Any]:
         """Start the job unless it is already running.
 
         Args:
             keys: The videos to export, by S3 key, or None for every video.
             label: A word for the zip's name, such as a site.
+            codes: The species to export, by code, or None for every species.
+            review: Whether the Review points are drawn on the videos.
 
         Returns:
             The state.
@@ -94,7 +102,7 @@ class VideoExporter:
             if not self._python.exists():
                 raise ValueError(f"videos: tracking is not set up, so {self._python} is missing")
             self._status = {"state": "running", "run": uuid.uuid4().hex, "done": 0, "total": 0, "fraction": 0.0, "message": "", "name": ""}
-        thread = threading.Thread(target=self._run, args=(keys, label), name="video-export", daemon=True)
+        thread = threading.Thread(target=self._run, args=(keys, label, codes, review), name="video-export", daemon=True)
         thread.start()
         return self.status()
 
@@ -151,12 +159,14 @@ class VideoExporter:
                 raise RuntimeError(f"{video['name']}: {errors.read().decode('utf-8', 'replace')[-ERROR_TAIL:].strip()}")
         os.replace(partial, target)
 
-    def _run(self, keys: Optional[List[str]], label: str) -> None:
+    def _run(self, keys: Optional[List[str]], label: str, codes: Optional[List[str]], review: bool) -> None:
         """Do the whole job, reporting any failure in the state.
 
         Args:
             keys: The videos to export, or None for every video.
             label: A word for the zip's name, or nothing.
+            codes: The species to export, or None for every species.
+            review: Whether the Review points are drawn.
         """
         building = self._folder / BUILD_FOLDER
         rendered = self._folder / RENDERED_FOLDER
@@ -164,9 +174,9 @@ class VideoExporter:
             rendered.mkdir(parents=True, exist_ok=True)
             shutil.rmtree(building, ignore_errors=True)
             building.mkdir(parents=True)
-            videos = self._collect(keys)
+            videos = self._collect(keys, codes=codes, review=review)
             self._update(total=len(videos))
-            package = self._build_package(building, keys)
+            package = self._build_package(building, keys, codes=codes)
             target_folder = package / VIDEOS_IN_PACKAGE
             target_folder.mkdir()
             keep = set()
@@ -191,9 +201,14 @@ class VideoExporter:
             for older in self._folder.glob(f"{ARCHIVE_PREFIX}*.zip"):
                 if older != archive:
                     older.unlink()
-            # A part-way export keeps the renders of the videos it left out.
+            # A whole export keeps only its own renders. One of part of the videos replaces
+            # only the old renders of its own videos. One that leaves out species or Review
+            # points removes nothing, so the full renders stay for the next full export.
+            filtered = codes is not None or not review
             for stale in rendered.glob("*.mp4"):
-                if stale.name not in keep and (keys is None or stale.name.split("_tracked.")[0] in stems):
+                if filtered or stale.name in keep:
+                    continue
+                if keys is None or stale.name.split("_tracked.")[0] in stems:
                     stale.unlink()
             self._update(state="done", name=archive.name, message="")
         except Exception as error:  # noqa: BLE001 - the page shows any failure of the job

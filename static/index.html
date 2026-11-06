@@ -27,6 +27,8 @@
     <symbol id="i-panel" viewBox="0 0 16 16"><path d="M2.5 2.5h11v11h-11zM2.5 9.6h11" fill="none" stroke-width="1.4" stroke-linejoin="round"/><path d="M4.6 11.6h1.6M7.2 11.6h1.6M9.8 11.6h1.6" fill="none" stroke-width="1.4" stroke-linecap="round"/></symbol>
     <symbol id="i-dock" viewBox="0 0 16 16"><path d="M2.5 2.5h11v11h-11zM9.5 2.5v11" fill="none" stroke-width="1.4" stroke-linejoin="round"/><path d="M11 5.5h1M11 7.5h1M11 9.5h1" fill="none" stroke-width="1.4" stroke-linecap="round"/></symbol>
     <symbol id="i-expand" viewBox="0 0 16 16"><path d="M2.5 6.2V2.5h3.7M9.8 2.5h3.7v3.7M13.5 9.8v3.7H9.8M6.2 13.5H2.5V9.8" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8 12 12.4 8 12.4 1.6 8 1.6 8z" fill="none" stroke-width="1.4" stroke-linejoin="round"/><circle cx="8" cy="8" r="2.1" fill="none" stroke-width="1.4"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 16 16"><path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8 12 12.4 8 12.4 1.6 8 1.6 8z" fill="none" stroke-width="1.4" stroke-linejoin="round"/><path d="M2.6 13.4L13.4 2.6" fill="none" stroke-width="1.6" stroke-linecap="round"/></symbol>
     <symbol id="i-collapse" viewBox="0 0 16 16"><path d="M6.2 2.5v3.7H2.5M13.5 6.2H9.8V2.5M9.8 13.5V9.8h3.7M2.5 9.8h3.7v3.7" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </svg>
 
@@ -99,6 +101,7 @@
                The same words stay on screen in the line under the species strip. -->
           <canvas id="overlay" class="stage-overlay" role="img"
                   aria-label="Video picture. You click a sponge to pause the video and mark a point, or you drag to draw a box around it."></canvas>
+          <p id="marks-hidden" class="marks-hidden" role="status" hidden>Marks hidden</p>
           <div id="stage-status" class="stage-status" role="status" aria-live="polite">
             <p id="stage-status-text" class="stage-status-text">Pick a video from the list on the left. Then click a sponge and pick its species in the wheel.</p>
             <button id="stage-action" type="button" class="button" hidden
@@ -133,6 +136,10 @@
             <button id="grid" type="button" class="button button-icon" aria-label="Quadrant grid and center line" aria-pressed="true"
                     title="You show or hide the quadrant lines and the center line. The G key does the same.">
               <svg class="icon" aria-hidden="true"><use href="#i-grid"></use></svg>
+            </button>
+            <button id="marks" type="button" class="button button-icon" aria-label="Hide marks" aria-pressed="false"
+                    title="You hide every mark and label on the picture, so you can see the sponge under them. Click again to show them. Holding Option hides them while you hold it.">
+              <svg class="icon" aria-hidden="true"><use id="marks-icon" href="#i-eye"></use></svg>
             </button>
             <button id="next" type="button" class="button button-icon" aria-label="Next video"
                     title="You open the next video in the list. The N key does the same.">
@@ -221,7 +228,10 @@
               <svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
             </button>
           </div>
+          <h3 class="export-heading">Sites and videos</h3>
           <div id="export-list"></div>
+          <h3 class="export-heading">Species</h3>
+          <div id="export-species"></div>
           <button id="export-go" type="button" class="button export-go"
                   title="You download one zip with these videos and their tables, frames, and crops. A video with new sightings renders for several minutes while you keep working.">Export</button>
         </div>
@@ -261,6 +271,7 @@
                 <div><dt><kbd>P</kbd></dt><dd>Show or hide the species keys panel</dd></div>
                 <div><dt><kbd>C</kbd></dt><dd>Compare species side by side</dd></div>
                 <div><dt><kbd>G</kbd></dt><dd>Show or hide the grid and center line</dd></div>
+                <div><dt>Hold <kbd>⌥</kbd></dt><dd>Hide the marks while held</dd></div>
                 <div><dt><kbd>Z</kbd></dt><dd>Undo the last pick: discard an unsaved one, else remove the last sighting</dd></div>
                 <div><dt><kbd>N</kbd></dt><dd>Open the next video in the list</dd></div>
                 <div><dt><kbd>?</kbd></dt><dd>Open or close this card</dd></div>
@@ -280,6 +291,7 @@
                 <div><dt><kbd>,</kbd> <kbd>.</kbd>, <kbd>←</kbd> <kbd>→</kbd></dt><dd>Step one frame; the mark and the wheel stay</dd></div>
                 <div><dt><kbd>Esc</kbd>, right-click</dt><dd>Cancel the mark and play on</dd></div>
                 <div><dt><kbd>Click</kbd> the picture</dt><dd>Move the mark there</dd></div>
+                <div><dt>Hold <kbd>⌥</kbd></dt><dd>Hide the mark and its label while held, to see the sponge</dd></div>
                 <div><dt><kbd>Click</kbd> elsewhere</dt><dd>Cancel the mark; the video stays paused</dd></div>
                 <div><dt><kbd>Tab</kbd>, <kbd>Shift</kbd>+<kbd>Tab</kbd></dt><dd>Walk the highlight around the wheel; an open guide follows it. The note box takes a click.</dd></div>
               </dl>
@@ -326,50 +338,113 @@
       </div>
     </section>
 
-    <aside class="panel log" aria-label="Sightings and tally">
-      <section class="log-section log-sightings">
+    <aside class="panel log" aria-label="Sightings, review, and diversity">
+      <div class="log-tabs" role="tablist" aria-label="Right panel">
+        <button id="tab-video" type="button" class="log-tab" role="tab" aria-selected="true" aria-controls="log-video" data-tab="video"
+                title="You see the sightings in the video that is open.">Video <span id="tab-video-count" class="log-tab-count">0</span></button>
+        <button id="tab-review" type="button" class="log-tab" role="tab" aria-selected="false" aria-controls="log-review" data-tab="review" tabindex="-1"
+                title="You see the points saved without a species, in every video.">Review <span id="to-label-count" class="log-tab-count">0</span></button>
+        <button id="tab-diversity" type="button" class="log-tab" role="tab" aria-selected="false" aria-controls="log-diversity" data-tab="diversity" tabindex="-1"
+                title="You see species richness and taxonomic coverage for all videos, one site, or this video, and the species tally.">Diversity</button>
+      </div>
+
+      <section id="log-video" class="log-view" role="tabpanel" aria-labelledby="tab-video">
         <div class="panel-head">
           <h2 class="panel-title">Sightings in this video</h2>
           <span id="sightings-count" class="count" title="The number of sightings saved in this video, and how many points in it wait for a species.">0</span>
         </div>
+        <p id="video-summary" class="log-note" hidden></p>
         <div class="panel-scroll">
           <ul id="sightings" class="rows"></ul>
           <p id="sightings-empty" class="empty">No sightings in this video yet.</p>
         </div>
       </section>
-      <section class="log-section log-later">
-        <div class="pane-handle pane-handle-y" data-pane="review" role="separator" aria-orientation="horizontal" tabindex="0"
-             aria-label="Resize the Review list" title="Drag to resize. Double-click for the default size."></div>
-        <div class="panel-head">
-          <h2 class="panel-title">Review</h2>
-          <span id="to-label-count" class="count" title="Points to review, across every video. Click one to open it.">0</span>
-        </div>
+
+      <section id="log-review" class="log-view" role="tabpanel" aria-labelledby="tab-review" hidden>
+        <p class="log-note">Points saved without a species, in every video, newest first. Click one to open it and pick its species.</p>
         <div class="panel-scroll">
           <ul id="to-label" class="rows" aria-label="Points to review"></ul>
           <p id="to-label-empty" class="empty">Nothing to review.</p>
         </div>
       </section>
-      <section class="log-section log-tally">
-        <div class="pane-handle pane-handle-y" data-pane="tally" role="separator" aria-orientation="horizontal" tabindex="0"
-             aria-label="Resize the species tally" title="Drag to resize. Double-click for the default size."></div>
-        <div class="panel-head">
-          <h2 class="panel-title">Species tally</h2>
-          <span id="tally-target" class="count" title="Each pinned species needs at least this many sightings across all videos.">target 3</span>
+
+      <section id="log-diversity" class="log-view" role="tabpanel" aria-labelledby="tab-diversity" hidden>
+        <div class="diversity-bar">
+          <div id="diversity-scope" class="scope-chips" role="group" aria-label="What the numbers cover">
+            <button type="button" class="scope-chip" data-scope="all" aria-pressed="true"
+                    title="You see the numbers for every video with sightings.">All</button>
+            <button type="button" class="scope-chip" data-scope="site" aria-pressed="false"
+                    title="You see the numbers for one site. The site of the open video comes first.">Site</button>
+            <button type="button" class="scope-chip" data-scope="video" aria-pressed="false"
+                    title="You see the numbers for the video that is open.">Video</button>
+          </div>
+          <label class="diversity-site" hidden>
+            <span class="visually-hidden">Site</span>
+            <select id="diversity-site" class="input" title="You pick the site the numbers cover."></select>
+          </label>
         </div>
-        <div class="panel-scroll">
-          <table id="tally" class="tally">
-            <thead>
-              <tr>
-                <th scope="col" title="The species code. Hover a row for the full name.">Species</th>
-                <th scope="col" class="num" title="Sightings across all videos. Rows under the target are highlighted.">Seen</th>
-                <th scope="col" class="num" title="The number of videos with at least one sighting of this species.">Videos</th>
-                <th scope="col" class="num" title="The earliest survey year with a sighting of this species.">First</th>
-              </tr>
-            </thead>
-            <tbody id="tally-rows"></tbody>
-          </table>
-          <p id="tally-total" class="empty" title="The number of sightings saved so far, across every video, and the points that still wait for a species.">0 sightings across all videos. 0 points to review.</p>
-          <p id="tally-empty" class="empty" hidden>The tally did not load.</p>
+        <div id="diversity-scroll" class="panel-scroll">
+          <h3 id="diversity-title" class="diversity-title"></h3>
+          <p id="diversity-empty" class="empty" hidden></p>
+          <div id="diversity-body" hidden>
+            <div id="diversity-tiles" class="stat-tiles"></div>
+            <p id="diversity-indices" class="diversity-indices"></p>
+
+            <section class="diversity-section">
+              <h4 class="section-title" title="How much of the species list this scope holds at each rank: observed taxa over the taxa in config/species.csv and the added species. Family and order come from config/taxonomy.csv (WoRMS).">Taxonomic coverage</h4>
+              <div id="diversity-coverage" class="bars"></div>
+              <details class="taxonomy">
+                <summary title="You open the species list by order and family. Species with sightings in this scope show their count.">Taxonomy tree</summary>
+                <div id="diversity-tree"></div>
+              </details>
+            </section>
+
+            <section id="diversity-sites-section" class="diversity-section">
+              <h4 class="section-title" title="Species richness of each site: the distinct species with sightings there, Unknown sponge left out.">Species by site</h4>
+              <div id="diversity-sites" class="bars"></div>
+            </section>
+
+            <section id="diversity-videos-section" class="diversity-section">
+              <h4 class="section-title" title="Species richness of each video: the distinct species with sightings in it, Unknown sponge left out.">Species by video</h4>
+              <div id="diversity-videos" class="bars"></div>
+            </section>
+
+            <section id="diversity-curve-section" class="diversity-section">
+              <h4 class="section-title" title="The species you would expect to have found after screening this many of these videos, averaged over every order of the videos (Mao Tau rarefaction). A curve that still climbs at the right means more videos would add species.">Species accumulation</h4>
+              <div id="diversity-curve" class="curve"></div>
+            </section>
+
+            <section id="diversity-species-section" class="diversity-section">
+              <h4 class="section-title" title="Labeled sightings of each species in this scope, and the videos they came from.">Species here</h4>
+              <table class="tally" aria-label="Species in this scope">
+                <thead>
+                  <tr>
+                    <th scope="col" title="The species code. Hover a row for the full name.">Species</th>
+                    <th scope="col" class="num" title="Labeled sightings in this scope.">Seen</th>
+                    <th scope="col" class="num" title="The videos in this scope with at least one sighting of the species.">Videos</th>
+                  </tr>
+                </thead>
+                <tbody id="diversity-species"></tbody>
+              </table>
+            </section>
+
+          </div>
+          <section id="diversity-tally-section" class="diversity-section">
+            <h4 class="section-title">Species tally <span id="tally-target" class="count" title="Each pinned species needs at least this many sightings across all videos. Rows under the target show in amber.">target 3</span></h4>
+            <table id="tally" class="tally">
+              <thead>
+                <tr>
+                  <th scope="col" title="The species code. The box holds its number key. Hover a row for the full name.">Species</th>
+                  <th scope="col" class="num" title="Sightings across all videos. Rows under the target are highlighted.">Seen</th>
+                  <th scope="col" class="num" title="The number of videos with at least one sighting of this species.">Videos</th>
+                  <th scope="col" class="num" title="The earliest survey year with a sighting of this species.">First</th>
+                </tr>
+              </thead>
+              <tbody id="tally-rows"></tbody>
+            </table>
+            <p id="tally-total" class="empty" title="The number of sightings saved so far, across every video, and the points that still wait for a species.">0 sightings across all videos. 0 points to review.</p>
+            <p id="tally-empty" class="empty" hidden>The tally did not load.</p>
+          </section>
         </div>
       </section>
     </aside>

@@ -768,7 +768,6 @@ def test_panes_resize(drive: Callable[[str], Dict[str, Any]]) -> None:
     assert abs(dragged["left"] - before["left"] - 60) <= 2, facts
     assert abs(dragged["right"] - before["right"] - 50) <= 2, facts
     assert abs(dragged["guide"] - before["guide"] - 70) <= 2, facts
-    assert abs(dragged["review"] - before["review"] - 40) <= 3, facts
     assert facts["crushed"]["stage"] >= 250, facts["crushed"]
     assert facts["guideSmallest"]["guide"] <= 222, facts["guideSmallest"]
     assert abs(facts["afterReload"]["left"] - dragged["left"]) <= 2
